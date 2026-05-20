@@ -2199,11 +2199,13 @@
       /** @type {Object} 当前生效规则 */
       rules: {},
       defaultRules: {
-        newbieDays:          30,
-        newbieTaskCount:     5,
-        veteranTaskCount:    2,
-        responseRateRed:     30,
-        responseRateYellow:  50,
+        newbieDays:           30,
+        newbieTaskCount:      5,
+        veteranTaskCount:     2,
+        responseRateRed:      30,
+        responseRateYellow:   50,
+        conversionRateRed:    30,
+        conversionRateYellow: 50,
         receivableYellowLine: 7,
       },
 
@@ -2264,14 +2266,27 @@
           this._save();
           this.storageStatus = '当前数据已存入 localStorage（Mock 数据已更新至 ' + this.DATA_VERSION + '）';
         } else {
-          const d = JSON.parse(raw);
-          this.users         = d.users;
-          this.customers     = d.customers;
-          this.interactions  = d.interactions;
-          this.receivables   = d.receivables;
-          this.managerTodos  = d.managerTodos  || [];
-          this.superiorTodos = d.superiorTodos || this._defaultSuperiorTodos();
-          this.storageStatus = '当前数据已存入 localStorage（从缓存恢复）';
+          try {
+            const d = JSON.parse(raw);
+            this.users         = d.users;
+            this.customers     = d.customers;
+            this.interactions  = d.interactions;
+            this.receivables   = d.receivables;
+            this.managerTodos  = d.managerTodos  || [];
+            this.superiorTodos = d.superiorTodos || this._defaultSuperiorTodos();
+            this.storageStatus = '当前数据已存入 localStorage（从缓存恢复）';
+          } catch {
+            localStorage.removeItem('m9_data');
+            const mock = this._mockData();
+            this.users         = mock.users;
+            this.customers     = mock.customers;
+            this.interactions  = mock.interactions;
+            this.receivables   = mock.receivables;
+            this.superiorTodos = this._defaultSuperiorTodos();
+            this.managerTodos  = [];
+            this._save();
+            this.storageStatus = '缓存数据损坏，已重置为 Mock 数据';
+          }
         }
       },
 
@@ -2470,39 +2485,8 @@
        * @returns {Object[]}
        */
       getTodayTasks() {
-        // 总监无自己的销售任务；小组长和销售都有个人任务
         if (!this.currentUser || this.currentUser.role==='director') return [];
-        const uid   = this.currentUser.id;
-        const mine  = this.customers.filter(c => c.ownerId===uid && c.stage!=='unassigned');
-        const days  = this.getDaysSinceJoin(this.currentUser);
-        const tasks = [];
-
-        // ── S 类客户（所有人均可见）──
-        mine.filter(c=>c.level==='S')
-          .slice(0, this.rules.veteranTaskCount)
-          .forEach(c => {
-            const overdueR = this.receivables.find(r =>
-              r.customerId===c.id && this.getReceivableStatus(r)==='red'
-            );
-            tasks.push({ ...c, taskType: overdueR ? 'overdue' : 's_followup', receivable: overdueR||null });
-          });
-
-        // ── 潜在客户触达（所有人均可见）──
-        // 新人取 newbieTaskCount 个，老人取少量（2个）保持视野
-        const potLimit = days < this.rules.newbieDays ? this.rules.newbieTaskCount : 2;
-        mine.filter(c=>c.stage==='Potential' && !tasks.find(t=>t.id===c.id))
-          .slice(0, potLimit)
-          .forEach(c => tasks.push({ ...c, taskType:'new_contact', receivable:null }));
-
-        // ── 逾期账款（自动插入，去重）──
-        this.receivables.forEach(r => {
-          const cust = this.customers.find(c=>c.id===r.customerId && c.ownerId===uid);
-          if (!cust || this.getReceivableStatus(r)!=='red') return;
-          if (tasks.find(t=>t.id===cust.id)) return;
-          tasks.push({ ...cust, taskType:'overdue', receivable:r });
-        });
-
-        return tasks;
+        return this._getTasksForUser(this.currentUser);
       },
 
       /** 当前筛选后的任务列表（供模板使用） */
@@ -2542,7 +2526,7 @@
         const all = this.customers.filter(c=>c.stage===stage && !c.pendingAccept);
         if (!this.currentUser) return all;
         const role = this.currentUser.role;
-        if (role === 'director' || role === 'manager') return all;
+        if (role === 'director') return all;
         if (role === 'team_lead') {
           const ids = [this.currentUser.id, ...this.users.filter(u=>u.managerId===this.currentUser.id).map(u=>u.id)];
           return all.filter(c=>ids.includes(c.ownerId));
@@ -2574,14 +2558,14 @@
         if (!next) return;
         if (next==='Intent' && !form.probability) { this.advModal.error='请选择意向概率'; return; }
         if (next==='Closed' && !(form.amount>0))  { this.advModal.error='请填写成交金额'; return; }
-        this.interactions.push({ id:'I'+Date.now(), customerId:customer.id, type:form.interType, content:form.content, date:this.todayStr(), userId:this.currentUser.id });
+        this.interactions.push({ id:this._genId('I'), customerId:customer.id, type:form.interType, content:form.content, date:this.todayStr(), userId:this.currentUser.id });
         const idx = this.customers.findIndex(c=>c.id===customer.id);
         if (idx!==-1) {
           this.customers[idx].stage = next;
           this.customers[idx].lastInteract = this.todayStr();
           if (next==='Intent') this.customers[idx].probability = form.probability;
           if (next==='Closed') {
-            this.receivables.push({ id:'R'+Date.now(), customerId:customer.id, totalAmount:form.amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:'成交自动生成' });
+            this.receivables.push({ id:this._genId('R'), customerId:customer.id, totalAmount:form.amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:'成交自动生成' });
           }
         }
         this._save();
@@ -2626,7 +2610,7 @@
         if (amount>balance) { this.payModal.error=`金额不能超过余额 ¥${this.fmt(balance)}`; return; }
         const idx = this.receivables.findIndex(r=>r.id===receivable.id);
         if (idx!==-1) { this.receivables[idx].paidAmount += amount; if (note) this.receivables[idx].note=note; }
-        this.interactions.push({ id:'I'+Date.now(), customerId:receivable.customerId, type:'收款', content:`收款 ¥${this.fmt(amount)}${note?'（'+note+'）':''}`, date:this.todayStr(), userId:this.currentUser.id });
+        this.interactions.push({ id:this._genId('I'), customerId:receivable.customerId, type:'收款', content:`收款 ¥${this.fmt(amount)}${note?'（'+note+'）':''}`, date:this.todayStr(), userId:this.currentUser.id });
         this._save(); this.payModal.show=false;
       },
       openDealModal() { this.dealModal = { show:true, customerId:'', amount:0, note:'', error:null }; },
@@ -2641,8 +2625,8 @@
         if (!(amount>0)) { this.dealModal.error='请输入成交金额'; return; }
         const idx = this.customers.findIndex(c=>c.id===customerId);
         if (idx!==-1) { this.customers[idx].stage='Closed'; this.customers[idx].lastInteract=this.todayStr(); }
-        this.receivables.push({ id:'R'+Date.now(), customerId, totalAmount:amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:note||'手动登记成交' });
-        this.interactions.push({ id:'I'+Date.now(), customerId, type:'成交', content:`登记成交 ¥${this.fmt(amount)}`, date:this.todayStr(), userId:this.currentUser.id });
+        this.receivables.push({ id:this._genId('R'), customerId, totalAmount:amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:note||'手动登记成交' });
+        this.interactions.push({ id:this._genId('I'), customerId, type:'成交', content:`登记成交 ¥${this.fmt(amount)}`, date:this.todayStr(), userId:this.currentUser.id });
         this._save(); this.dealModal.show=false;
       },
 
@@ -2738,7 +2722,8 @@
       getTeamName(userId) {
         const u = this.users.find(x=>x.id===userId);
         if (!u || !u.teamId) return '';
-        return u.teamId === 'team_a' ? 'A组' : 'B组';
+        const teamNameMap = { team_a:'A组', team_b:'B组' };
+        return teamNameMap[u.teamId] ?? u.teamId;
       },
 
       /** 角色中文标签 */
@@ -2777,22 +2762,29 @@
         const mine  = this.customers.filter(c=>c.ownerId===uid && c.stage!=='unassigned');
         const days  = this.getDaysSinceJoin(user);
         const tasks = [];
-        if (days < this.rules.newbieDays) {
-          mine.filter(c=>c.stage==='Potential').slice(0, this.rules.newbieTaskCount)
-            .forEach(c => tasks.push({...c, taskType:'new_contact', receivable:null}));
-        } else {
-          mine.filter(c=>c.level==='S').slice(0, this.rules.veteranTaskCount)
-            .forEach(c => {
-              const overdueR = this.receivables.find(r=>r.customerId===c.id && this.getReceivableStatus(r)==='red');
-              tasks.push({...c, taskType:overdueR?'overdue':'s_followup', receivable:overdueR||null});
-            });
-        }
+
+        // S 类客户维护（新人老人都要做）
+        mine.filter(c=>c.level==='S')
+          .slice(0, this.rules.veteranTaskCount)
+          .forEach(c => {
+            const overdueR = this.receivables.find(r=>r.customerId===c.id && this.getReceivableStatus(r)==='red');
+            tasks.push({...c, taskType:overdueR?'overdue':'s_followup', receivable:overdueR||null});
+          });
+
+        // 潜在客户触达：新人多（newbieTaskCount），老人少（2个）
+        const potLimit = days < this.rules.newbieDays ? this.rules.newbieTaskCount : 2;
+        mine.filter(c=>c.stage==='Potential' && !tasks.find(t=>t.id===c.id))
+          .slice(0, potLimit)
+          .forEach(c => tasks.push({...c, taskType:'new_contact', receivable:null}));
+
+        // 逾期账款自动插入，去重
         this.receivables.forEach(r => {
           const cust = this.customers.find(c=>c.id===r.customerId && c.ownerId===uid);
           if (!cust || this.getReceivableStatus(r)!=='red') return;
           if (tasks.find(t=>t.id===cust.id)) return;
           tasks.push({...cust, taskType:'overdue', receivable:r});
         });
+
         return tasks;
       },
 
@@ -2804,7 +2796,7 @@
        */
       pushReminder(customerId, salesUserId, reason) {
         this.interactions.push({
-          id:'I'+Date.now(), customerId,
+          id:this._genId('I'), customerId,
           type:'主管督催',
           content: reason || '主管提醒：请尽快跟进此客户',
           date:this.todayStr(), userId:this.currentUser.id,
@@ -2821,7 +2813,7 @@
         if (!note.trim()) return;
         if (todoType === 'assign' && !assigneeId) return;
         this.managerTodos.unshift({
-          id:'T'+Date.now(),
+          id:this._genId('T'),
           todoType,
           assigneeId: todoType==='assign' ? assigneeId : null,
           customerId: customerId || null,
@@ -2903,10 +2895,9 @@
 
       /** 确认导入：将解析结果写入 customers（stage=unassigned） */
       confirmImport() {
-        const valid = this.importModal.parsed.filter(r => r.name);
-        valid.forEach(r => {
+        this.importModal.parsed.forEach(r => {
           this.customers.push({
-            id:          'C' + Date.now() + Math.random().toString(36).slice(2,5),
+            id:          this._genId('C'),
             name:        r.name,
             level:       r.level,
             stage:       'unassigned',
@@ -2933,7 +2924,8 @@
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href = url; a.download = 'M9名单导入模板.csv';
-        a.click(); URL.revokeObjectURL(url);
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 300);
       },
 
       /**
@@ -3005,7 +2997,7 @@
           this.customers[idx].lastInteract = this.todayStr();
         }
         this.interactions.push({
-          id: 'I'+Date.now(), customerId,
+          id: this._genId('I'), customerId,
           type: '初次触达',
           content: '接受主管分配名单，开始主动触达。',
           date: this.todayStr(), userId: this.currentUser.id,
@@ -3068,11 +3060,14 @@
        * @returns {{icon:string, label:string, days:number|null, barCls:string}}
        */
       getRelationshipTemp(customer) {
+        const HOT_DAYS  = 2;
+        const WARM_DAYS = 6;
+        const COOL_DAYS = 13;
         if (!customer.lastInteract) return { icon:'🥶', label:'从未触达', days:null, barCls:'bg-slate-200' };
         const days = Math.floor((new Date(this.todayStr()) - new Date(customer.lastInteract)) / 86400000);
-        if (days <= 2)  return { icon:'🔥', label:`${days}天前`, days, barCls:'bg-red-400' };
-        if (days <= 6)  return { icon:'😊', label:`${days}天前`, days, barCls:'bg-amber-400' };
-        if (days <= 13) return { icon:'😐', label:`${days}天前`, days, barCls:'bg-slate-300' };
+        if (days <= HOT_DAYS)  return { icon:'🔥', label:`${days}天前`, days, barCls:'bg-red-400' };
+        if (days <= WARM_DAYS) return { icon:'😊', label:`${days}天前`, days, barCls:'bg-amber-400' };
+        if (days <= COOL_DAYS) return { icon:'😐', label:`${days}天前`, days, barCls:'bg-slate-300' };
         return { icon:'🥶', label:`${days}天前`, days, barCls:'bg-blue-200' };
       },
 
@@ -3083,114 +3078,124 @@
        */
       getLatestInteraction(customerId) {
         const list = this.getCustomerInteractions(customerId);
-        return list.length > 0 ? list[list.length - 1] : null;
+        return list.length > 0 ? list[0] : null;
       },
 
       // ── Hermes 智能提醒 ──────────────────────────
 
-      /**
-       * 根据 tab 和当前用户状态生成 Hermes 洞察消息列表
-       * @param {'tasks'|'funnel'|'receivables'|'manager'} tab
-       * @returns {Array<{level:'warn'|'tip'|'praise', icon:string, text:string, sub?:string}>}
-       */
       getHermesMsgs(tab) {
         if (!this.currentUser) return [];
+        const dispatch = {
+          tasks:       () => this._hermesTasksMsgs(),
+          funnel:      () => this._hermesFunnelMsgs(),
+          receivables: () => this._hermesReceivablesMsgs(),
+          manager:     () => this._hermesManagerMsgs(),
+        };
+        return dispatch[tab]?.() ?? [];
+      },
+
+      _hermesTasksMsgs() {
         const msgs = [];
+        if (this.hasManageView()) {
+          const redN     = this.getReceivablesByStatusAll('red').length;
+          const yelN     = this.getReceivablesByStatusAll('yellow').length;
+          const lagSales = this.getSalesUsers().filter(u => this.getOutreachProgress(u.id).pending > 0);
+          if (redN > 0)
+            msgs.push({ level:'warn',   icon:'🔴', text:`${redN} 笔账款已逾期，每推迟一天坏账风险上升。`, sub:'建议立即推送催收提醒', action:{ tab:'receivables', label:'查看账款 →' } });
+          if (yelN > 0)
+            msgs.push({ level:'warn',   icon:'🟡', text:`${yelN} 笔账款 7 天内到期，提前确认销售跟进计划。`, action:{ tab:'receivables', label:'查看账款 →' } });
+          if (lagSales.length > 0)
+            msgs.push({ level:'tip',    icon:'📞', text:`${lagSales.map(u=>u.name).join('、')} 今日触达未完成，建议穿透查看执行情况。`, action:{ tab:'manager', label:'查看进度 →' } });
+          if (redN===0 && yelN===0 && lagSales.length===0)
+            msgs.push({ level:'praise', icon:'✨', text:'全组今日执行状态良好，无异常需要处理！' });
+        } else {
+          const tasks    = this.getTodayTasks();
+          const doneN    = tasks.filter(t => this.isCompletedToday(t.id)).length;
+          const overdueN = tasks.filter(t => t.taskType === 'overdue').length;
+          const rr       = this.getResponseRate(this.currentUser.id);
+          const lowN     = tasks.filter(t => this.getCompleteness(t) < 40).length;
+          const pending  = this.getPendingLeads().length;
+          if (overdueN > 0)
+            msgs.push({ level:'warn',   icon:'🔴', text:`有 ${overdueN} 笔逾期账款，应收回收是今日最高优先级！`, action:{ tab:'receivables', label:'去处理 →' } });
+          if (pending > 0)
+            msgs.push({ level:'warn',   icon:'📬', text:`有 ${pending} 条名单待接受，及早接受后即可开始跟进。`, action:{ tab:'funnel', label:'去接受 →' } });
+          if (rr.status === 'red')
+            msgs.push({ level:'warn',   icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 严重偏低，话术或触达时机需要调整。`, action:{ tab:'funnel', label:'看漏斗 →' } });
+          else if (rr.status === 'yellow')
+            msgs.push({ level:'tip',    icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 偏低，建议换个时段重新触达沉默客户。`, action:{ tab:'funnel', label:'看漏斗 →' } });
+          if (lowN > 0)
+            msgs.push({ level:'tip',    icon:'📋', text:`${lowN} 个任务客户资料不完整，完善后 AI 话术质量显著提升。`, action:{ tab:'funnel', label:'完善资料 →' } });
+          if (doneN === tasks.length && tasks.length > 0)
+            msgs.push({ level:'praise', icon:'🎉', text:'今日任务全部完成！Hermes 为你的执行力点赞。' });
+          else if (tasks.length > 0)
+            msgs.push({ level:'tip',    icon:'⏱', text:`今日完成 ${doneN}/${tasks.length}，还剩 ${tasks.length-doneN} 个待处理，加油！`, action:{ tab:'tasks', label:'去处理 →', resetFilter:null } });
+          if (msgs.length === 0)
+            msgs.push({ level:'tip',    icon:'👋', text:'今日暂无紧急预警，保持节奏继续推进！' });
+        }
+        return msgs;
+      },
+
+      _hermesFunnelMsgs() {
+        const msgs    = [];
+        const today   = new Date(this.todayStr());
+        const STUCK   = 7;
         const isManager = this.hasManageView();
+        const stuck   = this.customers.filter(c => {
+          if (!isManager && c.ownerId !== this.currentUser.id) return false;
+          if (['Potential','Closed','unassigned'].includes(c.stage)) return false;
+          if (!c.lastInteract) return true;
+          return (today - new Date(c.lastInteract)) / 86400000 >= STUCK;
+        });
+        if (stuck.length > 0)
+          msgs.push({ level:'warn',   icon:'⏸', text:`${stuck.length} 个客户停滞 ≥${STUCK} 天未推进，冷却风险升高。`, sub: stuck.slice(0,3).map(c=>c.name).join('、')+(stuck.length>3?`等${stuck.length}个`:'') });
+        const emptyMid = ['Reaching','Replied','Meeting'].filter(s => this.getFunnelCount(s) === 0);
+        if (emptyMid.length > 0)
+          msgs.push({ level:'tip',    icon:'📊', text:`${emptyMid.map(s=>this.funnelStages.find(f=>f.id===s)?.label||s).join(' / ')} 阶段为空，漏斗断层影响下月业绩。` });
+        const intentN = this.getFunnelCount('Intent');
+        if (intentN > 0)
+          msgs.push({ level:'tip',    icon:'🎯', text:`${intentN} 个意向客户等待成交，抓住窗口期推进签单！`, action:{ tab:'receivables', label:'登记成交 →' } });
+        if (msgs.length === 0)
+          msgs.push({ level:'praise', icon:'✅', text:'漏斗各阶段分布均衡，继续保持推进节奏！' });
+        return msgs;
+      },
 
-        if (tab === 'tasks') {
-          if (isManager) {
-            const redN     = this.getReceivablesByStatusAll('red').length;
-            const yelN     = this.getReceivablesByStatusAll('yellow').length;
-            const lagSales = this.getSalesUsers().filter(u => this.getOutreachProgress(u.id).pending > 0);
-            if (redN > 0)
-              msgs.push({ level:'warn',   icon:'🔴', text:`${redN} 笔账款已逾期，每推迟一天坏账风险上升。`, sub:'建议立即推送催收提醒', action:{ tab:'receivables', label:'查看账款 →' } });
-            if (yelN > 0)
-              msgs.push({ level:'warn',   icon:'🟡', text:`${yelN} 笔账款 7 天内到期，提前确认销售跟进计划。`, action:{ tab:'receivables', label:'查看账款 →' } });
-            if (lagSales.length > 0)
-              msgs.push({ level:'tip',    icon:'📞', text:`${lagSales.map(u=>u.name).join('、')} 今日触达未完成，建议穿透查看执行情况。`, action:{ tab:'manager', label:'查看进度 →' } });
-            if (redN===0 && yelN===0 && lagSales.length===0)
-              msgs.push({ level:'praise', icon:'✨', text:'全组今日执行状态良好，无异常需要处理！' });
-          } else {
-            const tasks    = this.getTodayTasks();
-            const doneN    = tasks.filter(t => this.isCompletedToday(t.id)).length;
-            const overdueN = tasks.filter(t => t.taskType === 'overdue').length;
-            const rr       = this.getResponseRate(this.currentUser.id);
-            const lowN     = tasks.filter(t => this.getCompleteness(t) < 40).length;
-            const pending  = this.getPendingLeads().length;
-            if (overdueN > 0)
-              msgs.push({ level:'warn',   icon:'🔴', text:`有 ${overdueN} 笔逾期账款，应收回收是今日最高优先级！`, action:{ tab:'receivables', label:'去处理 →' } });
-            if (pending > 0)
-              msgs.push({ level:'warn',   icon:'📬', text:`有 ${pending} 条名单待接受，及早接受后即可开始跟进。`, action:{ tab:'funnel', label:'去接受 →' } });
-            if (rr.status === 'red')
-              msgs.push({ level:'warn',   icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 严重偏低，话术或触达时机需要调整。`, action:{ tab:'funnel', label:'看漏斗 →' } });
-            else if (rr.status === 'yellow')
-              msgs.push({ level:'tip',    icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 偏低，建议换个时段重新触达沉默客户。`, action:{ tab:'funnel', label:'看漏斗 →' } });
-            if (lowN > 0)
-              msgs.push({ level:'tip',    icon:'📋', text:`${lowN} 个任务客户资料不完整，完善后 AI 话术质量显著提升。`, action:{ tab:'funnel', label:'完善资料 →' } });
-            if (doneN === tasks.length && tasks.length > 0)
-              msgs.push({ level:'praise', icon:'🎉', text:'今日任务全部完成！Hermes 为你的执行力点赞。' });
-            else if (tasks.length > 0)
-              msgs.push({ level:'tip',    icon:'⏱', text:`今日完成 ${doneN}/${tasks.length}，还剩 ${tasks.length-doneN} 个待处理，加油！`, action:{ tab:'tasks', label:'去处理 →', resetFilter:null } });
-            if (msgs.length === 0)
-              msgs.push({ level:'tip',    icon:'👋', text:'今日暂无紧急预警，保持节奏继续推进！' });
-          }
-        }
+      _hermesReceivablesMsgs() {
+        const msgs      = [];
+        const isManager = this.hasManageView();
+        const redList   = isManager ? this.getReceivablesByStatusAll('red')    : this.getReceivablesByStatus('red');
+        const yelList   = isManager ? this.getReceivablesByStatusAll('yellow') : this.getReceivablesByStatus('yellow');
+        const all       = isManager ? this.receivables : this.getMyReceivables();
+        const overdueAmt = redList.reduce((s,r)=>s+(r.totalAmount-r.paidAmount),0);
+        if (redList.length > 0)
+          msgs.push({ level:'warn',   icon:'🔴', text:`${redList.length} 笔已逾期，逾期余额 ¥${this.fmt(overdueAmt)}，请立即跟进。`, sub:'逾期越久坏账概率越高' });
+        if (yelList.length > 0)
+          msgs.push({ level:'warn',   icon:'🟡', text:`${yelList.length} 笔临期（7天内），建议提前确认收款计划。` });
+        if (all.length === 0)
+          msgs.push({ level:'tip',    icon:'💰', text:'暂无应收记录，成交登记后账款将自动生成。', action:{ tab:'funnel', label:'去成交 →' } });
+        else if (redList.length === 0 && yelList.length === 0)
+          msgs.push({ level:'praise', icon:'💚', text:`应收账款状态健康，余额 ¥${this.fmt(this.sumBalance(all))} 均在账期内，继续保持！` });
+        return msgs;
+      },
 
-        if (tab === 'funnel') {
-          const today   = new Date(this.todayStr());
-          const STUCK   = 7;
-          const stuck   = this.customers.filter(c => {
-            if (!isManager && c.ownerId !== this.currentUser.id) return false;
-            if (['Potential','Closed','unassigned'].includes(c.stage)) return false;
-            if (!c.lastInteract) return true;
-            return (today - new Date(c.lastInteract)) / 86400000 >= STUCK;
-          });
-          if (stuck.length > 0)
-            msgs.push({ level:'warn',   icon:'⏸', text:`${stuck.length} 个客户停滞 ≥${STUCK} 天未推进，冷却风险升高。`, sub: stuck.slice(0,3).map(c=>c.name).join('、')+(stuck.length>3?`等${stuck.length}个`:'') });
-          const emptyMid = ['Reaching','Replied','Meeting'].filter(s => this.getFunnelCount(s) === 0);
-          if (emptyMid.length > 0)
-            msgs.push({ level:'tip',    icon:'📊', text:`${emptyMid.map(s=>this.funnelStages.find(f=>f.id===s)?.label||s).join(' / ')} 阶段为空，漏斗断层影响下月业绩。` });
-          const intentN = this.getFunnelCount('Intent');
-          if (intentN > 0)
-            msgs.push({ level:'tip',    icon:'🎯', text:`${intentN} 个意向客户等待成交，抓住窗口期推进签单！`, action:{ tab:'receivables', label:'登记成交 →' } });
-          if (msgs.length === 0)
-            msgs.push({ level:'praise', icon:'✅', text:'漏斗各阶段分布均衡，继续保持推进节奏！' });
-        }
-
-        if (tab === 'receivables') {
-          const redList    = isManager ? this.getReceivablesByStatusAll('red')    : this.getReceivablesByStatus('red');
-          const yelList    = isManager ? this.getReceivablesByStatusAll('yellow') : this.getReceivablesByStatus('yellow');
-          const all        = isManager ? this.receivables : this.getMyReceivables();
-          const overdueAmt = redList.reduce((s,r)=>s+(r.totalAmount-r.paidAmount),0);
-          if (redList.length > 0)
-            msgs.push({ level:'warn',   icon:'🔴', text:`${redList.length} 笔已逾期，逾期余额 ¥${this.fmt(overdueAmt)}，请立即跟进。`, sub:'逾期越久坏账概率越高' });
-          if (yelList.length > 0)
-            msgs.push({ level:'warn',   icon:'🟡', text:`${yelList.length} 笔临期（7天内），建议提前确认收款计划。` });
-          if (all.length === 0)
-            msgs.push({ level:'tip',    icon:'💰', text:'暂无应收记录，成交登记后账款将自动生成。', action:{ tab:'funnel', label:'去成交 →' } });
-          else if (redList.length === 0 && yelList.length === 0)
-            msgs.push({ level:'praise', icon:'💚', text:`应收账款状态健康，余额 ¥${this.fmt(this.sumBalance(all))} 均在账期内，继续保持！` });
-        }
-
-        if (tab === 'manager') {
-          const anomalyRed  = this.getSalesUsers().filter(u =>
-            this.getReceivablesByStatusAll('red').some(r => this.getCustomerOwner(r.customerId)===u.id) ||
-            this.getResponseRate(u.id).status === 'red' ||
-            this.getConversionRate(u.id).status === 'red'
-          ).length;
-          const unassignedN = this.customers.filter(c=>c.stage==='unassigned').length;
-          const lowVPS      = this.getSalesUsers().filter(u => this.getCompletenessStats(u.id).red > 0);
-          if (anomalyRed > 0)
-            msgs.push({ level:'warn',   icon:'🚨', text:`${anomalyRed} 名成员存在红色异常指标，需要重点介入。`, sub:'见下方三色异常面板' });
-          if (unassignedN > 0)
-            msgs.push({ level:'tip',    icon:'📋', text:`名单库有 ${unassignedN} 条线索待分配，越早分发跟进越及时。`, action:{ tab:'manager', label:'去分配 →' } });
-          if (lowVPS.length > 0)
-            msgs.push({ level:'tip',    icon:'📝', text:`${lowVPS.map(u=>u.name).join('、')} 名下客户资料不完整，影响 AI 话术质量。`, action:{ tab:'manager', label:'查看明细 →' } });
-          if (msgs.length === 0)
-            msgs.push({ level:'praise', icon:'🌟', text:'全组指标暂无异常，团队运转良好！' });
-        }
-
+      _hermesManagerMsgs() {
+        const msgs      = [];
+        const redList   = this.getReceivablesByStatusAll('red');
+        const redOwners = new Set(redList.map(r => this.getCustomerOwner(r.customerId)));
+        const anomalyRed = this.getSalesUsers().filter(u =>
+          redOwners.has(u.id) ||
+          this.getResponseRate(u.id).status === 'red' ||
+          this.getConversionRate(u.id).status === 'red'
+        ).length;
+        const unassignedN = this.customers.filter(c=>c.stage==='unassigned').length;
+        const lowVPS      = this.getSalesUsers().filter(u => this.getCompletenessStats(u.id).red > 0);
+        if (anomalyRed > 0)
+          msgs.push({ level:'warn',   icon:'🚨', text:`${anomalyRed} 名成员存在红色异常指标，需要重点介入。`, sub:'见下方三色异常面板' });
+        if (unassignedN > 0)
+          msgs.push({ level:'tip',    icon:'📋', text:`名单库有 ${unassignedN} 条线索待分配，越早分发跟进越及时。`, action:{ tab:'manager', label:'去分配 →' } });
+        if (lowVPS.length > 0)
+          msgs.push({ level:'tip',    icon:'📝', text:`${lowVPS.map(u=>u.name).join('、')} 名下客户资料不完整，影响 AI 话术质量。`, action:{ tab:'manager', label:'查看明细 →' } });
+        if (msgs.length === 0)
+          msgs.push({ level:'praise', icon:'🌟', text:'全组指标暂无异常，团队运转良好！' });
         return msgs;
       },
 
@@ -3266,7 +3271,7 @@
         const won  = mine.filter(c=>c.stage==='Closed').length;
         if (opps===0) return { rate:0, status:'gray', opps:0, won:0 };
         const rate   = Math.round(won/opps*100);
-        const status = rate < this.rules.responseRateRed ? 'red' : rate < this.rules.responseRateYellow ? 'yellow' : 'green';
+        const status = rate < this.rules.conversionRateRed ? 'red' : rate < this.rules.conversionRateYellow ? 'yellow' : 'green';
         return { rate, status, opps, won };
       },
 
@@ -3294,7 +3299,7 @@
       adoptScript() {
         const cust   = this.agentModal.customer;
         const script = this.agentModal.editMode ? this.agentModal.editedScript : this.agentModal.script;
-        this.interactions.push({ id:'I'+Date.now(), customerId:cust.id, type:'AI话术触达', content:script, date:this.todayStr(), userId:this.currentUser.id });
+        this.interactions.push({ id:this._genId('I'), customerId:cust.id, type:'AI话术触达', content:script, date:this.todayStr(), userId:this.currentUser.id });
         const idx = this.customers.findIndex(c=>c.id===cust.id);
         if (idx!==-1) {
           this.customers[idx].lastInteract = this.todayStr();
@@ -3316,6 +3321,7 @@
 
       // ── 辅助 ──
 
+      _genId(prefix='') { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2,7); },
       switchUser(uid) { this.currentUser = this.users.find(u=>u.id===uid)||null; this.activeTab = 'tasks'; },
       todayStr()      { return new Date().toISOString().split('T')[0]; },
       getDueDate30()  { const d=new Date(); d.setDate(d.getDate()+30); return d.toISOString().split('T')[0]; },
