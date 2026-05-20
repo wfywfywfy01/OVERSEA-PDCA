@@ -101,6 +101,29 @@
                 x-show="getManagerPendingCount()===0">全部处理完毕 ✓</span>
         </div>
 
+        <!-- 时间维度切换器（组长：今日/本周/本月；总监：+本季） -->
+        <div class="flex items-center gap-2 mb-4">
+          <span class="text-xs text-slate-400">督导周期：</span>
+          <div class="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            <template x-for="r in getAvailableRanges()" :key="r">
+              <button @click="setTimeRange(r)"
+                class="text-xs px-3 py-1 rounded-md transition-all font-medium"
+                :class="timeRange===r ? 'bg-white text-amber-600 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-700'"
+                x-text="getRangeLabel(r)">
+              </button>
+            </template>
+          </div>
+          <!-- 本期全组触达汇总 -->
+          <div class="ml-auto text-xs text-slate-500">
+            本期全组触达
+            <span class="font-semibold text-amber-600 ml-1"
+                  x-text="getPeriodOutreachSum(getVisibleUserIds())+'次'"></span>
+            · 活跃客户
+            <span class="font-semibold text-emerald-600 ml-1"
+                  x-text="getPeriodActiveCustSum(getVisibleUserIds())+'个'"></span>
+          </div>
+        </div>
+
         <!-- Hermes 提醒 -->
         <div class="mb-4 rounded-xl border overflow-hidden" x-show="getHermesMsgs('tasks').length>0"
              :class="getHermesCls(getHermesMsgs('tasks')[0]?.level)">
@@ -200,11 +223,14 @@
           </div>
         </div>
 
-        <!-- ③ 今日触达进度（总监：先展示小组汇总，点击展开成员；组长：直接展示成员） -->
+        <!-- ③ 本期触达进度（总监：先展示小组汇总，点击展开成员；组长：直接展示成员） -->
         <div class="mb-4">
           <div class="flex items-center gap-2 mb-2">
             <span class="text-xs">📞</span>
-            <span class="text-xs font-bold text-slate-700">今日触达进度</span>
+            <span class="text-xs font-bold text-slate-700"
+                  x-text="getRangeLabel(timeRange)+'触达进度'"></span>
+            <span class="text-xs text-slate-400 ml-auto"
+                  x-text="'按'+getRangeLabel(timeRange)+'计算'"></span>
           </div>
 
           <!-- 总监视角：按小组下钻 -->
@@ -277,7 +303,7 @@
                                      x-data="{pushed:false}">
                                   <span class="text-xs text-slate-600" x-text="c.name"></span>
                                   <template x-if="!pushed">
-                                    <button @click="pushReminder(c.id, u.id, '总监催促：请今日完成触达'); pushed=true"
+                                    <button @click="pushReminder(c.id, u.id, '总监催促：请'+getRangeLabel(timeRange)+'内完成触达'); pushed=true"
                                       class="text-xs text-red-500 hover:text-red-700 ml-1 transition-all" title="推送催促">📣</button>
                                   </template>
                                   <template x-if="pushed">
@@ -329,7 +355,7 @@
                              x-data="{pushed:false}">
                           <span class="text-xs text-slate-600" x-text="c.name"></span>
                           <template x-if="!pushed">
-                            <button @click="pushReminder(c.id, u.id, '主管催促：请今日完成触达'); pushed=true"
+                            <button @click="pushReminder(c.id, u.id, '主管催促：请'+getRangeLabel(timeRange)+'内完成触达'); pushed=true"
                               class="text-xs text-red-500 hover:text-red-700 ml-1 transition-all" title="推送催促">📣</button>
                           </template>
                           <template x-if="pushed">
@@ -503,6 +529,38 @@
                 x-text="(taskFilter?getFilteredTasks().length:getTodayTasks().length)+' 个任务'"></span>
         </div>
 
+        <!-- 时间维度切换器（销售：今日 / 本周） -->
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-xs text-slate-400">周期：</span>
+          <div class="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            <template x-for="r in getAvailableRanges()" :key="r">
+              <button @click="setTimeRange(r)"
+                class="text-xs px-3 py-1 rounded-md transition-all font-medium"
+                :class="timeRange===r ? 'bg-white text-indigo-600 shadow-sm font-semibold' : 'text-slate-500 hover:text-slate-700'"
+                x-text="getRangeLabel(r)">
+              </button>
+            </template>
+          </div>
+          <!-- 本期概览小数据 -->
+          <div class="ml-auto flex items-center gap-3 text-xs text-slate-500">
+            <span>
+              <span class="font-semibold text-indigo-600"
+                    x-text="getPeriodOutreach(currentUser.id)"></span>
+              次触达
+            </span>
+            <span>
+              <span class="font-semibold text-emerald-600"
+                    x-text="getPeriodActiveCust(currentUser.id)"></span>
+              客互动
+            </span>
+            <span>
+              <span class="font-semibold text-sky-600"
+                    x-text="getPeriodNewCust(currentUser.id)"></span>
+              新客
+            </span>
+          </div>
+        </div>
+
         <!-- Hermes 提醒 -->
         <div class="mb-4 rounded-xl border overflow-hidden" x-show="getHermesMsgs('tasks').length>0"
              :class="getHermesCls(getHermesMsgs('tasks')[0]?.level)">
@@ -545,19 +603,22 @@
             <div class="text-xs text-slate-400 mt-1"
                  x-text="getReceivablesByStatus('red').length+' 红 / '+getReceivablesByStatus('yellow').length+' 黄'"></div>
           </div>
-          <div class="bg-white border border-slate-200 rounded-xl p-2.5">
+          <!-- 本期回复率（随时间维度变化） -->
+          <div class="border rounded-xl p-2.5 transition-all"
+               :class="getPeriodResponseRate(currentUser.id).status==='red'?'bg-red-50 border-red-200':getPeriodResponseRate(currentUser.id).status==='yellow'?'bg-amber-50 border-amber-200':getPeriodResponseRate(currentUser.id).status==='green'?'bg-emerald-50 border-emerald-200':'bg-white border-slate-200'">
             <div class="flex items-center justify-between">
-              <span class="text-xs text-slate-500">📞 回复率</span>
+              <span class="text-xs text-slate-500">📞 <span x-text="getRangeLabel(timeRange)"></span>回复率</span>
               <span class="text-xs font-bold"
-                    :class="getResponseRate(currentUser.id).status==='red'?'text-red-600':getResponseRate(currentUser.id).status==='yellow'?'text-amber-600':getResponseRate(currentUser.id).status==='green'?'text-emerald-600':'text-slate-400'"
-                    x-text="getResponseRate(currentUser.id).status==='gray'?'—':getResponseRate(currentUser.id).replied+'/'+getResponseRate(currentUser.id).reached"></span>
+                    :class="getPeriodResponseRate(currentUser.id).status==='red'?'text-red-600':getPeriodResponseRate(currentUser.id).status==='yellow'?'text-amber-600':getPeriodResponseRate(currentUser.id).status==='green'?'text-emerald-600':'text-slate-400'"
+                    x-text="getPeriodResponseRate(currentUser.id).status==='gray'?'—':getPeriodResponseRate(currentUser.id).replied+'/'+getPeriodResponseRate(currentUser.id).reached"></span>
             </div>
             <div class="text-xs text-slate-400 mt-1"
-                 x-text="'触达 '+getResponseRate(currentUser.id).reached+' · 回复 '+getResponseRate(currentUser.id).replied"></div>
+                 x-text="getPeriodResponseRate(currentUser.id).status==='gray'?'暂无触达记录':'触达 '+getPeriodResponseRate(currentUser.id).reached+' · 回复 '+getPeriodResponseRate(currentUser.id).replied"></div>
           </div>
+          <!-- 累计转化率（不随时间维度变，加标注） -->
           <div class="bg-white border border-slate-200 rounded-xl p-2.5">
             <div class="flex items-center justify-between">
-              <span class="text-xs text-slate-500">🎯 转化率</span>
+              <span class="text-xs text-slate-500">🎯 累计转化</span>
               <span class="text-xs font-bold"
                     :class="getConversionRate(currentUser.id).status==='red'?'text-red-600':getConversionRate(currentUser.id).status==='yellow'?'text-amber-600':getConversionRate(currentUser.id).status==='green'?'text-emerald-600':'text-slate-400'"
                     x-text="getConversionRate(currentUser.id).status==='gray'?'—':getConversionRate(currentUser.id).won+'/'+getConversionRate(currentUser.id).opps"></span>
@@ -1082,7 +1143,7 @@
                     </div>
                     <span class="text-xs text-slate-400" x-text="team.members.length+'人'"></span>
                   </div>
-                  <div class="grid grid-cols-4 gap-2 text-center">
+                  <div class="grid grid-cols-5 gap-1.5 text-center">
                     <div>
                       <div class="text-base font-bold text-indigo-600" x-text="team.stats.total"></div>
                       <div class="text-xs text-slate-400">客户</div>
@@ -1098,6 +1159,12 @@
                     <div>
                       <div class="text-base font-bold" :class="team.stats.red>0?'text-red-600':'text-slate-400'" x-text="team.stats.red"></div>
                       <div class="text-xs text-slate-400">红账</div>
+                    </div>
+                    <!-- 本期触达（随时间维度联动） -->
+                    <div class="bg-indigo-50 rounded-lg py-0.5">
+                      <div class="text-base font-bold text-indigo-600"
+                           x-text="getPeriodOutreachSum(team.members.map(u=>u.id))"></div>
+                      <div class="text-xs text-indigo-400" x-text="getRangeLabel(timeRange)+'触达'"></div>
                     </div>
                   </div>
                   <!-- 成员列表 -->
@@ -1115,8 +1182,26 @@
           </div>
         </template>
 
-        <!-- KPI 卡片（数据范围：当前管理视角内的成员） -->
-        <div class="grid grid-cols-4 gap-3 mb-4">
+        <!-- 时间维度切换器（总监：日/周/月/季；组长：日/周/月） -->
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-xs text-slate-400">数据周期：</span>
+          <div class="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            <template x-for="r in getAvailableRanges()" :key="r">
+              <button @click="setTimeRange(r)"
+                class="text-xs px-3 py-1 rounded-md transition-all font-medium"
+                :class="timeRange===r
+                  ? (isDirector()?'bg-white text-indigo-600 shadow-sm font-semibold':'bg-white text-amber-600 shadow-sm font-semibold')
+                  : 'text-slate-500 hover:text-slate-700'"
+                x-text="getRangeLabel(r)">
+              </button>
+            </template>
+          </div>
+          <span class="ml-auto text-xs text-slate-400"
+                x-text="getRangeLabel(timeRange)+'数据视角'"></span>
+        </div>
+
+        <!-- KPI 卡片行 1：累计总量（灰色基准线） -->
+        <div class="grid grid-cols-4 gap-3 mb-2">
           <div class="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
             <div class="text-xl font-bold text-indigo-600"
                  x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage!=='unassigned').length,0)"></div>
@@ -1135,6 +1220,46 @@
           <div class="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
             <div class="text-xl font-bold text-amber-600" x-text="getLeads().length"></div>
             <div class="text-xs text-slate-400 mt-0.5">待分配名单</div>
+          </div>
+        </div>
+
+        <!-- KPI 卡片行 2：本期动态指标（随时间维度变化）-->
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="rounded-xl border p-3 text-center"
+               :class="isDirector()?'bg-indigo-50 border-indigo-200':'bg-amber-50 border-amber-200'">
+            <div class="text-xl font-bold"
+                 :class="isDirector()?'text-indigo-700':'text-amber-700'"
+                 x-text="getPeriodOutreachSum(getVisibleUserIds())"></div>
+            <div class="text-xs mt-0.5"
+                 :class="isDirector()?'text-indigo-400':'text-amber-400'"
+                 x-text="getRangeLabel(timeRange)+'触达次数'"></div>
+          </div>
+          <div class="rounded-xl border p-3 text-center"
+               :class="isDirector()?'bg-indigo-50 border-indigo-200':'bg-amber-50 border-amber-200'">
+            <div class="text-xl font-bold"
+                 :class="isDirector()?'text-indigo-700':'text-amber-700'"
+                 x-text="getPeriodActiveCustSum(getVisibleUserIds())"></div>
+            <div class="text-xs mt-0.5"
+                 :class="isDirector()?'text-indigo-400':'text-amber-400'"
+                 x-text="getRangeLabel(timeRange)+'活跃客户'"></div>
+          </div>
+          <div class="rounded-xl border p-3 text-center"
+               :class="isDirector()?'bg-indigo-50 border-indigo-200':'bg-amber-50 border-amber-200'">
+            <div class="text-xl font-bold"
+                 :class="getPeriodOverdue(getVisibleUserIds())>0?'text-red-600':(isDirector()?'text-indigo-700':'text-amber-700')"
+                 x-text="getPeriodOverdue(getVisibleUserIds())"></div>
+            <div class="text-xs mt-0.5"
+                 :class="isDirector()?'text-indigo-400':'text-amber-400'"
+                 x-text="getRangeLabel(timeRange)+'逾期账款'"></div>
+          </div>
+          <div class="rounded-xl border p-3 text-center"
+               :class="isDirector()?'bg-indigo-50 border-indigo-200':'bg-amber-50 border-amber-200'">
+            <div class="text-xl font-bold"
+                 :class="isDirector()?'text-indigo-700':'text-amber-700'"
+                 x-text="getPeriodNewCustSum(getVisibleUserIds())"></div>
+            <div class="text-xs mt-0.5"
+                 :class="isDirector()?'text-indigo-400':'text-amber-400'"
+                 x-text="getRangeLabel(timeRange)+'新增客户'"></div>
           </div>
         </div>
 
@@ -1255,6 +1380,7 @@
                   <th class="pb-2 text-center font-medium">红账</th>
                   <th class="pb-2 text-center font-medium">回复率</th>
                   <th class="pb-2 text-center font-medium">转化率</th>
+                  <th class="pb-2 text-center font-medium text-indigo-400" x-text="getRangeLabel(timeRange)+'触达'"></th>
                   <th class="pb-2"></th>
                 </tr>
               </thead>
@@ -1277,6 +1403,8 @@
                         x-text="getSalesUsers().reduce((s,u)=>s+receivables.filter(r=>{const c=customers.find(x=>x.id===r.customerId);return c&&c.ownerId===u.id&&getReceivableStatus(r)==='red';}).length,0)"></td>
                     <td class="py-2 text-center text-slate-400 text-xs">—</td>
                     <td class="py-2 text-center text-slate-400 text-xs">—</td>
+                    <td class="py-2 text-center font-bold text-indigo-600"
+                        x-text="getPeriodOutreachSum(getSalesUsers().map(u=>u.id))"></td>
                     <td class="py-2"></td>
                   </tr>
                 </template>
@@ -1362,6 +1490,13 @@
                                 x-text="getConversionRate(row.user.id).status==='gray'?'—':getConversionRate(row.user.id).won+'/'+getConversionRate(row.user.id).opps"></span>
                         </template>
                       </td>
+                      <!-- 本期触达 -->
+                      <td class="py-2 text-center font-semibold"
+                          :class="row.type==='group'?'text-indigo-500':'text-slate-600'"
+                          x-text="row.type==='group'
+                            ? getPeriodOutreachSum(row.team.members.map(u=>u.id))
+                            : getPeriodOutreach(row.user.id)">
+                      </td>
                       <!-- 操作 -->
                       <td class="py-2 text-right">
                         <template x-if="row.type==='member'">
@@ -1393,6 +1528,8 @@
                           x-text="getSalesUsers().reduce((s,u)=>s+receivables.filter(r=>{const c=customers.find(x=>x.id===r.customerId);return c&&c.ownerId===u.id&&getReceivableStatus(r)==='red';}).length,0)"></td>
                       <td class="py-2 text-center text-slate-300 text-xs">—</td>
                       <td class="py-2 text-center text-slate-300 text-xs">—</td>
+                      <td class="py-2 text-center font-bold text-indigo-500"
+                          x-text="getPeriodOutreachSum(getSalesUsers().map(u=>u.id))"></td>
                       <td class="py-2"></td>
                     </tr>
                   </template>
@@ -1423,6 +1560,8 @@
                               class="text-xs px-2 py-0.5 rounded-full font-bold"
                               x-text="getConversionRate(u.id).status==='gray'?'—':getConversionRate(u.id).won+'/'+getConversionRate(u.id).opps"></span>
                       </td>
+                      <td class="py-2 text-center font-semibold text-slate-600"
+                          x-text="getPeriodOutreach(u.id)"></td>
                       <td class="py-2 text-right">
                         <button @click="penetrate(u.id)"
                           class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded font-semibold transition-all">
@@ -2199,13 +2338,11 @@
       /** @type {Object} 当前生效规则 */
       rules: {},
       defaultRules: {
-        newbieDays:           30,
-        newbieTaskCount:      5,
-        veteranTaskCount:     2,
-        responseRateRed:      30,
-        responseRateYellow:   50,
-        conversionRateRed:    30,
-        conversionRateYellow: 50,
+        newbieDays:          30,
+        newbieTaskCount:     5,
+        veteranTaskCount:    2,
+        responseRateRed:     30,
+        responseRateYellow:  50,
         receivableYellowLine: 7,
       },
 
@@ -2231,6 +2368,8 @@
       expandedTeams: {},
       /** Hermes 自进化计数（用户点击行动后递增） */
       hermesLearnCount: 0,
+      /** 当前选中的时间维度：'day' | 'week' | 'month' | 'quarter' */
+      timeRange: 'month',
 
       // ── 名单分配状态 ──
       assigningLeadId: null,
@@ -2241,12 +2380,18 @@
         this.initStorage();
         this.initRules();
         this.currentUser = this.users.find(u => u.id === 'A') || this.users[0];
+        // 根据初始用户角色设置默认时间维度
+        if (this.currentUser) {
+          if (this.currentUser.role === 'director')       this.timeRange = 'quarter';
+          else if (this.currentUser.role === 'team_lead') this.timeRange = 'month';
+          else                                            this.timeRange = 'week';
+        }
       },
 
       // ── 持久化 ──
 
       /** 数据结构版本号，升级时自动清空旧缓存 */
-      DATA_VERSION: 'v2-org',
+      DATA_VERSION: 'v3-time',
 
       initStorage() {
         const raw        = localStorage.getItem('m9_data');
@@ -2266,27 +2411,14 @@
           this._save();
           this.storageStatus = '当前数据已存入 localStorage（Mock 数据已更新至 ' + this.DATA_VERSION + '）';
         } else {
-          try {
-            const d = JSON.parse(raw);
-            this.users         = d.users;
-            this.customers     = d.customers;
-            this.interactions  = d.interactions;
-            this.receivables   = d.receivables;
-            this.managerTodos  = d.managerTodos  || [];
-            this.superiorTodos = d.superiorTodos || this._defaultSuperiorTodos();
-            this.storageStatus = '当前数据已存入 localStorage（从缓存恢复）';
-          } catch {
-            localStorage.removeItem('m9_data');
-            const mock = this._mockData();
-            this.users         = mock.users;
-            this.customers     = mock.customers;
-            this.interactions  = mock.interactions;
-            this.receivables   = mock.receivables;
-            this.superiorTodos = this._defaultSuperiorTodos();
-            this.managerTodos  = [];
-            this._save();
-            this.storageStatus = '缓存数据损坏，已重置为 Mock 数据';
-          }
+          const d = JSON.parse(raw);
+          this.users         = d.users;
+          this.customers     = d.customers;
+          this.interactions  = d.interactions;
+          this.receivables   = d.receivables;
+          this.managerTodos  = d.managerTodos  || [];
+          this.superiorTodos = d.superiorTodos || this._defaultSuperiorTodos();
+          this.storageStatus = '当前数据已存入 localStorage（从缓存恢复）';
         }
       },
 
@@ -2386,85 +2518,157 @@
          * - C018~C021: 名单库（unassigned），完善度 20%（source only）
          */
         const customers = [
-          // ── Vivi (VV): 新人，6 Potential + 中间阶段 + 制造黄色回复率异常 ──
-          { id:'C001', name:'新星科技', level:'A', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C002', name:'博远贸易', level:'B', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C003', name:'聚力网络', level:'C', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:'李明', phone:'13800001001', industry:null,   size:null, source:null },
-          { id:'C004', name:'锦程医疗', level:'A', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:'王芳', phone:'13800001002', industry:null,   size:null, source:null },
-          { id:'C005', name:'蓝天建材', level:'B', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:'张伟', phone:'13800001003', industry:null,   size:null, source:null },
-          { id:'C006', name:'聚创传媒', level:'C', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C007', name:'晨光咨询', level:'A', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-1), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C008', name:'鸿飞电子', level:'B', stage:'Replied',   ownerId:'VV',  lastInteract:d(-2), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C009', name:'远航物流', level:'A', stage:'Meeting',   ownerId:'VV',  lastInteract:d(-3), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C010', name:'盛世文化', level:'B', stage:'Intent',    ownerId:'VV',  lastInteract:d(-4), probability:50,   contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C011', name:'智汇软件', level:'C', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C015', name:'恒大塑料', level:'B', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-1), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C016', name:'东方钢铁', level:'C', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-2), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
-          { id:'C017', name:'明珠服装', level:'B', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-3), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          // ── Vivi (VV): 新人，各阶段客户 ──
+          // createdAt 越靠前的阶段越新（新人最近分配）
+          { id:'C001', name:'新星科技', level:'A', stage:'Potential', ownerId:'VV',  createdAt:d(-6),   lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C002', name:'博远贸易', level:'B', stage:'Potential', ownerId:'VV',  createdAt:d(-5),   lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C003', name:'聚力网络', level:'C', stage:'Potential', ownerId:'VV',  createdAt:d(-7),   lastInteract:null,  probability:null, contactName:'李明', phone:'13800001001', industry:null,   size:null, source:null },
+          { id:'C004', name:'锦程医疗', level:'A', stage:'Potential', ownerId:'VV',  createdAt:d(-4),   lastInteract:null,  probability:null, contactName:'王芳', phone:'13800001002', industry:null,   size:null, source:null },
+          { id:'C005', name:'蓝天建材', level:'B', stage:'Potential', ownerId:'VV',  createdAt:d(-3),   lastInteract:null,  probability:null, contactName:'张伟', phone:'13800001003', industry:null,   size:null, source:null },
+          { id:'C006', name:'聚创传媒', level:'C', stage:'Potential', ownerId:'VV',  createdAt:d(-8),   lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C007', name:'晨光咨询', level:'A', stage:'Reaching',  ownerId:'VV',  createdAt:d(-14),  lastInteract:d(-1), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C008', name:'鸿飞电子', level:'B', stage:'Replied',   ownerId:'VV',  createdAt:d(-20),  lastInteract:d(-2), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C009', name:'远航物流', level:'A', stage:'Meeting',   ownerId:'VV',  createdAt:d(-35),  lastInteract:d(-3), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C010', name:'盛世文化', level:'B', stage:'Intent',    ownerId:'VV',  createdAt:d(-52),  lastInteract:d(-4), probability:50,   contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C011', name:'智汇软件', level:'C', stage:'Potential', ownerId:'VV',  createdAt:d(-5),   lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C015', name:'恒大塑料', level:'B', stage:'Reaching',  ownerId:'VV',  createdAt:d(-4),   lastInteract:d(-1), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C016', name:'东方钢铁', level:'C', stage:'Reaching',  ownerId:'VV',  createdAt:d(-5),   lastInteract:d(-2), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C017', name:'明珠服装', level:'B', stage:'Reaching',  ownerId:'VV',  createdAt:d(-6),   lastInteract:d(-3), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
           // ── 何海文 (HHW): 老人，3 S 级 ──
-          { id:'C012', name:'龙腾集团', level:'S', stage:'Closed',   ownerId:'HHW', lastInteract:d(-3), probability:null, contactName:'陈总', phone:'13900001001', industry:'制造业', size:'大型(500人+)',      source:'老客转介绍' },
-          { id:'C013', name:'鑫隆实业', level:'S', stage:'Intent',   ownerId:'HHW', lastInteract:d(-1), probability:75,   contactName:'刘总', phone:'13900001002', industry:'贸易',   size:'中型(100-499人)', source:null },
-          { id:'C014', name:'华盛电力', level:'S', stage:'Meeting',  ownerId:'HHW', lastInteract:d(-2), probability:null, contactName:'吴总', phone:'13900001003', industry:'能源',   size:null,               source:null },
-          // ── 杨晶晶 (JJ): A组长，自己也做业绩，5 个客户分布各阶段 ──
-          { id:'C030', name:'普惠金融', level:'S', stage:'Intent',   ownerId:'JJ',  lastInteract:d(-1), probability:75,   contactName:'赵总', phone:'13700001001', industry:'金融',   size:'大型(500人+)',      source:'内部推荐' },
-          { id:'C031', name:'云鼎科技', level:'A', stage:'Meeting',  ownerId:'JJ',  lastInteract:d(-2), probability:null, contactName:'孙总', phone:'13700001002', industry:'科技',   size:'中型(100-499人)', source:'市场活动' },
-          { id:'C032', name:'锦绣纺织', level:'B', stage:'Replied',  ownerId:'JJ',  lastInteract:d(-3), probability:null, contactName:'钱总', phone:'13700001003', industry:'纺织',   size:null,               source:null },
-          { id:'C033', name:'泰山物业', level:'A', stage:'Reaching', ownerId:'JJ',  lastInteract:d(-4), probability:null, contactName:null,   phone:null,          industry:'物业',   size:null,               source:null },
-          { id:'C034', name:'启航教育', level:'B', stage:'Potential',ownerId:'JJ',  lastInteract:null,  probability:null, contactName:null,   phone:null,          industry:'教育',   size:null,               source:null },
-          // ── Viki (VIKI): B组老人，3 S 级 ──
-          { id:'C050', name:'瀚海航运', level:'S', stage:'Closed',   ownerId:'VIKI',lastInteract:d(-2), probability:null, contactName:'李董', phone:'13600001001', industry:'航运',   size:'大型(500人+)',      source:'老客转介绍' },
-          { id:'C051', name:'金石传媒', level:'S', stage:'Intent',   ownerId:'VIKI',lastInteract:d(-4), probability:50,   contactName:'陈总', phone:'13600001002', industry:'传媒',   size:'中型(100-499人)', source:'内部推荐' },
-          { id:'C052', name:'宏图地产', level:'S', stage:'Meeting',  ownerId:'VIKI',lastInteract:d(-6), probability:null, contactName:'王总', phone:'13600001003', industry:'地产',   size:null,               source:null },
-          // ── Lina (LINA): B组长，自己也做业绩，5 个客户分布各阶段 ──
-          { id:'C060', name:'恒达钢铁', level:'S', stage:'Closed',   ownerId:'LINA',lastInteract:d(-1), probability:null, contactName:'周董', phone:'13500001001', industry:'钢铁',   size:'大型(500人+)',      source:'老客转介绍' },
-          { id:'C061', name:'晟丰电子', level:'A', stage:'Intent',   ownerId:'LINA',lastInteract:d(-2), probability:50,   contactName:'吴总', phone:'13500001002', industry:'电子',   size:'中型(100-499人)', source:'市场活动' },
-          { id:'C062', name:'华章文化', level:'B', stage:'Meeting',  ownerId:'LINA',lastInteract:d(-3), probability:null, contactName:'郑总', phone:'13500001003', industry:'文化',   size:null,               source:'官网咨询' },
-          { id:'C063', name:'翠微农业', level:'A', stage:'Reaching', ownerId:'LINA',lastInteract:d(-5), probability:null, contactName:null,   phone:null,          industry:'农业',   size:null,               source:null },
-          { id:'C064', name:'博雅传播', level:'B', stage:'Potential',ownerId:'LINA',lastInteract:null,  probability:null, contactName:null,   phone:null,          industry:'传媒',   size:null,               source:null },
+          { id:'C012', name:'龙腾集团', level:'S', stage:'Closed',   ownerId:'HHW', createdAt:d(-95),  lastInteract:d(-3), probability:null, contactName:'陈总', phone:'13900001001', industry:'制造业', size:'大型(500人+)',      source:'老客转介绍' },
+          { id:'C013', name:'鑫隆实业', level:'S', stage:'Intent',   ownerId:'HHW', createdAt:d(-42),  lastInteract:d(-1), probability:75,   contactName:'刘总', phone:'13900001002', industry:'贸易',   size:'中型(100-499人)', source:null },
+          { id:'C014', name:'华盛电力', level:'S', stage:'Meeting',  ownerId:'HHW', createdAt:d(-24),  lastInteract:d(-2), probability:null, contactName:'吴总', phone:'13900001003', industry:'能源',   size:null,               source:null },
+          // ── 杨晶晶 (JJ): A组长，自己也做业绩 ──
+          { id:'C030', name:'普惠金融', level:'S', stage:'Intent',   ownerId:'JJ',  createdAt:d(-58),  lastInteract:d(-1), probability:75,   contactName:'赵总', phone:'13700001001', industry:'金融',   size:'大型(500人+)',      source:'内部推荐' },
+          { id:'C031', name:'云鼎科技', level:'A', stage:'Meeting',  ownerId:'JJ',  createdAt:d(-30),  lastInteract:d(-2), probability:null, contactName:'孙总', phone:'13700001002', industry:'科技',   size:'中型(100-499人)', source:'市场活动' },
+          { id:'C032', name:'锦绣纺织', level:'B', stage:'Replied',  ownerId:'JJ',  createdAt:d(-15),  lastInteract:d(-3), probability:null, contactName:'钱总', phone:'13700001003', industry:'纺织',   size:null,               source:null },
+          { id:'C033', name:'泰山物业', level:'A', stage:'Reaching', ownerId:'JJ',  createdAt:d(-7),   lastInteract:d(-4), probability:null, contactName:null,   phone:null,          industry:'物业',   size:null,               source:null },
+          { id:'C034', name:'启航教育', level:'B', stage:'Potential',ownerId:'JJ',  createdAt:d(-3),   lastInteract:null,  probability:null, contactName:null,   phone:null,          industry:'教育',   size:null,               source:null },
+          // ── Viki (VIKI): B组老人 ──
+          { id:'C050', name:'瀚海航运', level:'S', stage:'Closed',   ownerId:'VIKI',createdAt:d(-112), lastInteract:d(-2), probability:null, contactName:'李董', phone:'13600001001', industry:'航运',   size:'大型(500人+)',      source:'老客转介绍' },
+          { id:'C051', name:'金石传媒', level:'S', stage:'Intent',   ownerId:'VIKI',createdAt:d(-60),  lastInteract:d(-4), probability:50,   contactName:'陈总', phone:'13600001002', industry:'传媒',   size:'中型(100-499人)', source:'内部推荐' },
+          { id:'C052', name:'宏图地产', level:'S', stage:'Meeting',  ownerId:'VIKI',createdAt:d(-32),  lastInteract:d(-6), probability:null, contactName:'王总', phone:'13600001003', industry:'地产',   size:null,               source:null },
+          // ── Lina (LINA): B组长 ──
+          { id:'C060', name:'恒达钢铁', level:'S', stage:'Closed',   ownerId:'LINA',createdAt:d(-100), lastInteract:d(-1), probability:null, contactName:'周董', phone:'13500001001', industry:'钢铁',   size:'大型(500人+)',      source:'老客转介绍' },
+          { id:'C061', name:'晟丰电子', level:'A', stage:'Intent',   ownerId:'LINA',createdAt:d(-50),  lastInteract:d(-2), probability:50,   contactName:'吴总', phone:'13500001002', industry:'电子',   size:'中型(100-499人)', source:'市场活动' },
+          { id:'C062', name:'华章文化', level:'B', stage:'Meeting',  ownerId:'LINA',createdAt:d(-26),  lastInteract:d(-3), probability:null, contactName:'郑总', phone:'13500001003', industry:'文化',   size:null,               source:'官网咨询' },
+          { id:'C063', name:'翠微农业', level:'A', stage:'Reaching', ownerId:'LINA',createdAt:d(-12),  lastInteract:d(-5), probability:null, contactName:null,   phone:null,          industry:'农业',   size:null,               source:null },
+          { id:'C064', name:'博雅传播', level:'B', stage:'Potential',ownerId:'LINA',createdAt:d(-4),   lastInteract:null,  probability:null, contactName:null,   phone:null,          industry:'传媒',   size:null,               source:null },
           // ── 名单库（待分配）──
-          { id:'C018', name:'天创软件', level:'A', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'内部推荐' },
-          { id:'C019', name:'恒美科技', level:'B', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'市场活动' },
-          { id:'C020', name:'奥达实业', level:'A', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'官网咨询' },
-          { id:'C021', name:'凌云传媒', level:'C', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'电话开发' },
+          { id:'C018', name:'天创软件', level:'A', stage:'unassigned', ownerId:null, createdAt:d(-2), lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'内部推荐' },
+          { id:'C019', name:'恒美科技', level:'B', stage:'unassigned', ownerId:null, createdAt:d(-2), lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'市场活动' },
+          { id:'C020', name:'奥达实业', level:'A', stage:'unassigned', ownerId:null, createdAt:d(-1), lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'官网咨询' },
+          { id:'C021', name:'凌云传媒', level:'C', stage:'unassigned', ownerId:null, createdAt:d(-1), lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'电话开发' },
         ];
 
         const interactions = [
-          // ── 何海文 (HHW) ──
+          // ════════ 今日 d(0) ════════
+          { id:'I_t01', customerId:'C007', type:'AI话术触达', content:'再次跟进晨光咨询，询问是否有需求讨论的时间窗口。',       date:d(0),  userId:'VV'   },
+          { id:'I_t02', customerId:'C008', type:'微信',       content:'鸿飞电子今日回复：下周一下午来公司演示吧。',             date:d(0),  userId:'VV'   },
+          { id:'I_t03', customerId:'C013', type:'微信',       content:'鑫隆实业刘总：合同已盖章，准备邮寄。',                   date:d(0),  userId:'HHW'  },
+          { id:'I_t04', customerId:'C030', type:'电话',       content:'普惠金融赵总确认，下周五来公司签约。',                   date:d(0),  userId:'JJ'   },
+          { id:'I_t05', customerId:'C051', type:'微信',       content:'金石传媒陈总：审批通过，安排合同签署时间。',             date:d(0),  userId:'VIKI' },
+          { id:'I_t06', customerId:'C062', type:'电话',       content:'华章文化郑总反馈：报价单已审核，需微调付款节点。',       date:d(0),  userId:'LINA' },
+
+          // ════════ 本周 d(-1) ~ d(-6) ════════
+          // HHW
           { id:'I001', customerId:'C012', type:'电话',       content:'确认合同细节，签约完成，首付款已汇。',                              date:d(-5), userId:'HHW' },
           { id:'I002', customerId:'C012', type:'微信',       content:'催收尾款，客户表示月底到账。',                                        date:d(-3), userId:'HHW' },
           { id:'I003', customerId:'C013', type:'拜访',       content:'产品演示顺利，客户已填写意向书，概率75%。',                            date:d(-1), userId:'HHW' },
           { id:'I004', customerId:'C014', type:'会议',       content:'高层联席会议，客户要求再对比一家供应商。',                             date:d(-2), userId:'HHW' },
-          // ── Vivi (VV) ──
-          { id:'I005', customerId:'C007', type:'AI话术触达', content:'您好，晨光咨询的负责人，我是M9顾问。贵司目前在客户管理方面有哪些痛点？', date:d(-1), userId:'VV' },
-          { id:'I006', customerId:'C008', type:'AI话术触达', content:'您好，鸿飞电子团队，帮助B级企业提升客户转化效率，方便约个电话吗？',     date:d(-3), userId:'VV' },
-          { id:'I007', customerId:'C008', type:'微信',       content:'客户回复：下周二下午有空，发会议链接过来吧。',                         date:d(-2), userId:'VV' },
-          { id:'I008', customerId:'C009', type:'AI话术触达', content:'您好，远航物流负责人，已有3个物流行业标杆客户，转化率提升均25%+。',     date:d(-5), userId:'VV' },
-          { id:'I009', customerId:'C009', type:'微信',       content:'客户回复：感兴趣，约下周三上午10点在其公司演示。',                     date:d(-4), userId:'VV' },
-          { id:'I010', customerId:'C009', type:'拜访',       content:'上门演示，产品反馈正面，需回去和合伙人商量后决定。',                   date:d(-3), userId:'VV' },
-          { id:'I011', customerId:'C010', type:'AI话术触达', content:'您好，盛世文化团队，为B级企业定制六阶段漏斗方案，能显著缩短销售周期。', date:d(-7), userId:'VV' },
-          { id:'I012', customerId:'C010', type:'微信',       content:'客户回复：最近在找这类工具，可以安排详细演示。',                        date:d(-6), userId:'VV' },
-          { id:'I013', customerId:'C010', type:'会议',       content:'线上会议30分钟，功能满意，提出定价问题，已发报价单。',                 date:d(-5), userId:'VV' },
-          { id:'I014', customerId:'C010', type:'拜访',       content:'上门签意向书，客户确认概率50%，待内部审批后签约。',                    date:d(-4), userId:'VV' },
-          { id:'I015', customerId:'C015', type:'AI话术触达', content:'初次触达，等待客户回复。',                                            date:d(-1), userId:'VV' },
-          { id:'I016', customerId:'C016', type:'AI话术触达', content:'初次触达，等待客户回复。',                                            date:d(-2), userId:'VV' },
-          { id:'I017', customerId:'C017', type:'AI话术触达', content:'初次触达，等待客户回复。',                                            date:d(-3), userId:'VV' },
-          // ── 杨晶晶 (JJ) ──
-          { id:'I020', customerId:'C030', type:'拜访',       content:'高层拜访，确认续费意向，报价75折，概率75%。',                          date:d(-1), userId:'JJ' },
-          { id:'I021', customerId:'C030', type:'微信',       content:'发送正式报价单，客户回复需开会讨论。',                                 date:d(-2), userId:'JJ' },
-          { id:'I022', customerId:'C031', type:'会议',       content:'上门演示，需求对焦完成，进入高层汇报阶段。',                           date:d(-2), userId:'JJ' },
-          { id:'I023', customerId:'C031', type:'微信',       content:'发送演示材料，等待高层反馈。',                                        date:d(-3), userId:'JJ' },
-          { id:'I024', customerId:'C032', type:'微信',       content:'客户回复：产品符合需求，安排下周上门演示。',                           date:d(-3), userId:'JJ' },
-          { id:'I025', customerId:'C033', type:'AI话术触达', content:'初次触达泰山物业，介绍M9客户管理方案。',                               date:d(-4), userId:'JJ' },
-          // ── Viki (VIKI) ──
-          { id:'I030', customerId:'C050', type:'电话',       content:'续约合同签署完成，全款已到账。',                                      date:d(-2), userId:'VIKI' },
-          { id:'I031', customerId:'C051', type:'拜访',       content:'二次拜访，确认签约条件，概率50%，等待内部审批。',                     date:d(-4), userId:'VIKI' },
-          { id:'I032', customerId:'C051', type:'微信',       content:'跟进审批进度，客户表示下周有结果。',                                  date:d(-5), userId:'VIKI' },
-          { id:'I033', customerId:'C052', type:'会议',       content:'联席会议，明确需求范围，进入演示阶段。',                               date:d(-6), userId:'VIKI' },
-          // ── Lina (LINA) ──
-          { id:'I040', customerId:'C060', type:'电话',       content:'签约完成，全款已收，归档。',                                          date:d(-1), userId:'LINA' },
-          { id:'I041', customerId:'C061', type:'拜访',       content:'二期方案演示，客户倾向于签约，概率50%，等确认。',                     date:d(-2), userId:'LINA' },
-          { id:'I042', customerId:'C062', type:'会议',       content:'高层会议，产品演示通过，进入报价阶段。',                               date:d(-3), userId:'LINA' },
-          { id:'I043', customerId:'C063', type:'AI话术触达', content:'初次联系翠微农业，等待回复。',                                        date:d(-5), userId:'LINA' },
+          // VV
+          { id:'I005', customerId:'C007', type:'AI话术触达', content:'您好，晨光咨询的负责人，我是M9顾问。贵司目前在客户管理方面有哪些痛点？', date:d(-1), userId:'VV'  },
+          { id:'I006', customerId:'C008', type:'AI话术触达', content:'您好，鸿飞电子团队，帮助B级企业提升客户转化效率，方便约个电话吗？',     date:d(-3), userId:'VV'  },
+          { id:'I007', customerId:'C008', type:'微信',       content:'客户回复：下周二下午有空，发会议链接过来吧。',                         date:d(-2), userId:'VV'  },
+          { id:'I008', customerId:'C009', type:'AI话术触达', content:'您好，远航物流负责人，已有3个物流行业标杆客户，转化率提升均25%+。',     date:d(-5), userId:'VV'  },
+          { id:'I009', customerId:'C009', type:'微信',       content:'客户回复：感兴趣，约下周三上午10点在其公司演示。',                     date:d(-4), userId:'VV'  },
+          { id:'I010', customerId:'C009', type:'拜访',       content:'上门演示，产品反馈正面，需回去和合伙人商量后决定。',                   date:d(-3), userId:'VV'  },
+          { id:'I015', customerId:'C015', type:'AI话术触达', content:'初次触达恒大塑料，等待客户回复。',                                    date:d(-1), userId:'VV'  },
+          { id:'I016', customerId:'C016', type:'AI话术触达', content:'初次触达东方钢铁，等待客户回复。',                                    date:d(-2), userId:'VV'  },
+          { id:'I017', customerId:'C017', type:'AI话术触达', content:'初次触达明珠服装，等待客户回复。',                                    date:d(-3), userId:'VV'  },
+          // JJ
+          { id:'I020', customerId:'C030', type:'拜访',       content:'高层拜访，确认续费意向，报价75折，概率75%。',                          date:d(-1), userId:'JJ'  },
+          { id:'I021', customerId:'C030', type:'微信',       content:'发送正式报价单，客户回复需开会讨论。',                                 date:d(-2), userId:'JJ'  },
+          { id:'I022', customerId:'C031', type:'会议',       content:'上门演示，需求对焦完成，进入高层汇报阶段。',                           date:d(-2), userId:'JJ'  },
+          { id:'I023', customerId:'C031', type:'微信',       content:'发送演示材料，等待高层反馈。',                                        date:d(-3), userId:'JJ'  },
+          { id:'I024', customerId:'C032', type:'微信',       content:'客户回复：产品符合需求，安排下周上门演示。',                           date:d(-3), userId:'JJ'  },
+          { id:'I025', customerId:'C033', type:'AI话术触达', content:'初次触达泰山物业，介绍M9客户管理方案。',                               date:d(-4), userId:'JJ'  },
+          // VIKI
+          { id:'I030', customerId:'C050', type:'电话',       content:'续约合同签署完成，全款已到账。',                                      date:d(-2), userId:'VIKI'},
+          { id:'I031', customerId:'C051', type:'拜访',       content:'二次拜访，确认签约条件，概率50%，等待内部审批。',                     date:d(-4), userId:'VIKI'},
+          { id:'I032', customerId:'C051', type:'微信',       content:'跟进审批进度，客户表示下周有结果。',                                  date:d(-5), userId:'VIKI'},
+          { id:'I033', customerId:'C052', type:'会议',       content:'联席会议，明确需求范围，进入演示阶段。',                               date:d(-6), userId:'VIKI'},
+          // LINA
+          { id:'I040', customerId:'C060', type:'电话',       content:'签约完成，全款已收，归档。',                                          date:d(-1), userId:'LINA'},
+          { id:'I041', customerId:'C061', type:'拜访',       content:'二期方案演示，客户倾向于签约，概率50%，等确认。',                     date:d(-2), userId:'LINA'},
+          { id:'I042', customerId:'C062', type:'会议',       content:'高层会议，产品演示通过，进入报价阶段。',                               date:d(-3), userId:'LINA'},
+          { id:'I043', customerId:'C063', type:'AI话术触达', content:'初次联系翠微农业，等待回复。',                                        date:d(-5), userId:'LINA'},
+
+          // ════════ 本月（本周前）d(-8) ~ d(-28) ════════
+          // HHW - 华盛电力早期触达
+          { id:'I_m01', customerId:'C014', type:'AI话术触达', content:'首次触达华盛电力吴总，介绍M9能源行业方案。',                 date:d(-15), userId:'HHW'  },
+          { id:'I_m02', customerId:'C014', type:'电话',       content:'电话沟通，客户对供应商管理模块感兴趣，约线下演示。',         date:d(-10), userId:'HHW'  },
+          // HHW - 鑫隆实业前期
+          { id:'I_m03', customerId:'C013', type:'AI话术触达', content:'触达鑫隆实业刘总，介绍大贸易企业客户管理痛点解决方案。',     date:d(-22), userId:'HHW'  },
+          { id:'I_m04', customerId:'C013', type:'电话',       content:'电话深聊30分钟，需求对焦清晰，约现场演示。',                 date:d(-16), userId:'HHW'  },
+          // VV - 鸿飞电子前期
+          { id:'I_m05', customerId:'C008', type:'AI话术触达', content:'二次触达鸿飞电子，发送行业案例PPT。',                       date:d(-18), userId:'VV'   },
+          // VV - 盛世文化前期（本月拿到意向）
+          { id:'I_m06', customerId:'C010', type:'AI话术触达', content:'首次触达盛世文化，介绍M9漏斗管理价值。',                     date:d(-25), userId:'VV'   },
+          { id:'I_m07', customerId:'C010', type:'微信',       content:'客户回复：最近在找这类工具，可以安排详细演示。',             date:d(-22), userId:'VV'   },
+          { id:'I_m08', customerId:'C010', type:'会议',       content:'线上会议30分钟，功能满意，提出定价问题，已发报价单。',       date:d(-18), userId:'VV'   },
+          { id:'I_m09', customerId:'C010', type:'拜访',       content:'上门签意向书，客户确认概率50%，待内部审批后签约。',          date:d(-12), userId:'VV'   },
+          // JJ - 云鼎科技前期（本月推进到Meeting）
+          { id:'I_m10', customerId:'C031', type:'电话',       content:'电话触达云鼎科技孙总，确认演示时间。',                       date:d(-14), userId:'JJ'   },
+          { id:'I_m11', customerId:'C031', type:'AI话术触达', content:'发送行业解决方案材料，等待高层反馈。',                       date:d(-20), userId:'JJ'   },
+          // JJ - 锦绣纺织本月跟进
+          { id:'I_m12', customerId:'C032', type:'AI话术触达', content:'首次触达锦绣纺织钱总，介绍M9纺织行业方案。',                 date:d(-22), userId:'JJ'   },
+          { id:'I_m13', customerId:'C032', type:'电话',       content:'电话沟通，客户有意向，安排产品演示。',                       date:d(-9),  userId:'JJ'   },
+          // VIKI - 宏图地产本月推进
+          { id:'I_m14', customerId:'C052', type:'AI话术触达', content:'触达宏图地产王总，介绍M9地产行业解决方案。',                 date:d(-25), userId:'VIKI' },
+          { id:'I_m15', customerId:'C052', type:'电话',       content:'深度电话沟通，需求清晰，约线下见面。',                       date:d(-15), userId:'VIKI' },
+          // LINA - 晟丰电子本月跟进
+          { id:'I_m16', customerId:'C061', type:'电话',       content:'拜访晟丰电子，演示二期扩展方案。',                           date:d(-18), userId:'LINA' },
+          // LINA - 华章文化本月推进
+          { id:'I_m17', customerId:'C062', type:'AI话术触达', content:'触达华章文化郑总，介绍文化企业销售管理方案。',               date:d(-22), userId:'LINA' },
+          { id:'I_m18', customerId:'C062', type:'电话',       content:'电话沟通，客户感兴趣，约线下演示。',                         date:d(-12), userId:'LINA' },
+          // LINA - 翠微农业本月开发
+          { id:'I_m19', customerId:'C063', type:'AI话术触达', content:'触达翠微农业，介绍农业企业客户管理方案。',                   date:d(-10), userId:'LINA' },
+
+          // ════════ 本季（本月前）d(-32) ~ d(-88) ════════
+          // HHW - 龙腾集团早期建立关系
+          { id:'I_q01', customerId:'C012', type:'AI话术触达', content:'首次触达龙腾集团陈总，介绍M9制造业解决方案。',              date:d(-80), userId:'HHW'  },
+          { id:'I_q02', customerId:'C012', type:'拜访',       content:'上门拜访，展示制造业3个标杆案例，客户兴趣浓厚。',           date:d(-65), userId:'HHW'  },
+          { id:'I_q03', customerId:'C012', type:'会议',       content:'高层会议，产品深度演示，确定采购预算和节点。',               date:d(-50), userId:'HHW'  },
+          { id:'I_q04', customerId:'C012', type:'拜访',       content:'签约前拜访，讨论合同细节和服务条款。',                       date:d(-35), userId:'HHW'  },
+          // HHW - 鑫隆实业季度前期
+          { id:'I_q05', customerId:'C013', type:'AI话术触达', content:'初次接触鑫隆实业，发送公司介绍和案例集。',                  date:d(-55), userId:'HHW'  },
+          // VV - 远航物流季度建立（老客推进到Meeting）
+          { id:'I_q06', customerId:'C009', type:'AI话术触达', content:'Vivi首次触达远航物流，介绍M9物流行业价值。',                date:d(-32), userId:'VV'   },
+          // VV - 盛世文化季度前期
+          { id:'I_q07', customerId:'C010', type:'AI话术触达', content:'首次发现盛世文化，初步调研需求。',                          date:d(-45), userId:'VV'   },
+          // JJ - 普惠金融季度建立（重点客户）
+          { id:'I_q08', customerId:'C030', type:'AI话术触达', content:'触达普惠金融赵总，介绍M9金融行业客户管理方案。',            date:d(-55), userId:'JJ'   },
+          { id:'I_q09', customerId:'C030', type:'电话',       content:'电话深聊40分钟，确认核心痛点，约线下演示。',                date:d(-45), userId:'JJ'   },
+          { id:'I_q10', customerId:'C030', type:'拜访',       content:'上门演示，高层参与，决策链清晰，进入意向阶段。',             date:d(-38), userId:'JJ'   },
+          { id:'I_q11', customerId:'C030', type:'会议',       content:'高层战略会议，确定合作框架，开始谈报价。',                  date:d(-32), userId:'JJ'   },
+          // VIKI - 瀚海航运季度完成签约
+          { id:'I_q12', customerId:'C050', type:'AI话术触达', content:'触达瀚海航运李董，介绍M9航运企业管理方案。',               date:d(-85), userId:'VIKI' },
+          { id:'I_q13', customerId:'C050', type:'拜访',       content:'上门拜访，展示航运行业解决方案，客户高度认同。',             date:d(-72), userId:'VIKI' },
+          { id:'I_q14', customerId:'C050', type:'会议',       content:'高层签约会议，合同金额确认，准备首付款。',                  date:d(-55), userId:'VIKI' },
+          // VIKI - 金石传媒季度推进
+          { id:'I_q15', customerId:'C051', type:'AI话术触达', content:'触达金石传媒陈总，介绍M9传媒行业方案。',                   date:d(-58), userId:'VIKI' },
+          { id:'I_q16', customerId:'C051', type:'电话',       content:'电话沟通，确认演示时间。',                                 date:d(-45), userId:'VIKI' },
+          { id:'I_q17', customerId:'C051', type:'拜访',       content:'上门演示，需求匹配度高，进入报价阶段。',                   date:d(-35), userId:'VIKI' },
+          // LINA - 恒达钢铁季度完成签约
+          { id:'I_q18', customerId:'C060', type:'AI话术触达', content:'触达恒达钢铁周董，介绍M9钢铁行业解决方案。',               date:d(-88), userId:'LINA' },
+          { id:'I_q19', customerId:'C060', type:'拜访',       content:'上门拜访钢铁厂区，现场了解管理痛点。',                     date:d(-75), userId:'LINA' },
+          { id:'I_q20', customerId:'C060', type:'会议',       content:'高层会议+演示，客户决定采购，进入合同谈判。',               date:d(-58), userId:'LINA' },
+          { id:'I_q21', customerId:'C060', type:'电话',       content:'合同细节敲定，准备签约。',                                 date:d(-40), userId:'LINA' },
+          // LINA - 晟丰电子季度建立
+          { id:'I_q22', customerId:'C061', type:'AI话术触达', content:'触达晟丰电子吴总，介绍M9电子行业方案。',                   date:d(-48), userId:'LINA' },
+          { id:'I_q23', customerId:'C061', type:'拜访',       content:'上门演示，客户认为产品贴合需求。',                         date:d(-38), userId:'LINA' },
+          { id:'I_q24', customerId:'C061', type:'会议',       content:'高层汇报会议，明确扩展模块需求，进入意向阶段。',             date:d(-32), userId:'LINA' },
         ];
 
         const receivables = [
@@ -2485,8 +2689,39 @@
        * @returns {Object[]}
        */
       getTodayTasks() {
+        // 总监无自己的销售任务；小组长和销售都有个人任务
         if (!this.currentUser || this.currentUser.role==='director') return [];
-        return this._getTasksForUser(this.currentUser);
+        const uid   = this.currentUser.id;
+        const mine  = this.customers.filter(c => c.ownerId===uid && c.stage!=='unassigned');
+        const days  = this.getDaysSinceJoin(this.currentUser);
+        const tasks = [];
+
+        // ── S 类客户（所有人均可见）──
+        mine.filter(c=>c.level==='S')
+          .slice(0, this.rules.veteranTaskCount)
+          .forEach(c => {
+            const overdueR = this.receivables.find(r =>
+              r.customerId===c.id && this.getReceivableStatus(r)==='red'
+            );
+            tasks.push({ ...c, taskType: overdueR ? 'overdue' : 's_followup', receivable: overdueR||null });
+          });
+
+        // ── 潜在客户触达（所有人均可见）──
+        // 新人取 newbieTaskCount 个，老人取少量（2个）保持视野
+        const potLimit = days < this.rules.newbieDays ? this.rules.newbieTaskCount : 2;
+        mine.filter(c=>c.stage==='Potential' && !tasks.find(t=>t.id===c.id))
+          .slice(0, potLimit)
+          .forEach(c => tasks.push({ ...c, taskType:'new_contact', receivable:null }));
+
+        // ── 逾期账款（自动插入，去重）──
+        this.receivables.forEach(r => {
+          const cust = this.customers.find(c=>c.id===r.customerId && c.ownerId===uid);
+          if (!cust || this.getReceivableStatus(r)!=='red') return;
+          if (tasks.find(t=>t.id===cust.id)) return;
+          tasks.push({ ...cust, taskType:'overdue', receivable:r });
+        });
+
+        return tasks;
       },
 
       /** 当前筛选后的任务列表（供模板使用） */
@@ -2526,7 +2761,7 @@
         const all = this.customers.filter(c=>c.stage===stage && !c.pendingAccept);
         if (!this.currentUser) return all;
         const role = this.currentUser.role;
-        if (role === 'director') return all;
+        if (role === 'director' || role === 'manager') return all;
         if (role === 'team_lead') {
           const ids = [this.currentUser.id, ...this.users.filter(u=>u.managerId===this.currentUser.id).map(u=>u.id)];
           return all.filter(c=>ids.includes(c.ownerId));
@@ -2558,14 +2793,14 @@
         if (!next) return;
         if (next==='Intent' && !form.probability) { this.advModal.error='请选择意向概率'; return; }
         if (next==='Closed' && !(form.amount>0))  { this.advModal.error='请填写成交金额'; return; }
-        this.interactions.push({ id:this._genId('I'), customerId:customer.id, type:form.interType, content:form.content, date:this.todayStr(), userId:this.currentUser.id });
+        this.interactions.push({ id:'I'+Date.now(), customerId:customer.id, type:form.interType, content:form.content, date:this.todayStr(), userId:this.currentUser.id });
         const idx = this.customers.findIndex(c=>c.id===customer.id);
         if (idx!==-1) {
           this.customers[idx].stage = next;
           this.customers[idx].lastInteract = this.todayStr();
           if (next==='Intent') this.customers[idx].probability = form.probability;
           if (next==='Closed') {
-            this.receivables.push({ id:this._genId('R'), customerId:customer.id, totalAmount:form.amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:'成交自动生成' });
+            this.receivables.push({ id:'R'+Date.now(), customerId:customer.id, totalAmount:form.amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:'成交自动生成' });
           }
         }
         this._save();
@@ -2610,7 +2845,7 @@
         if (amount>balance) { this.payModal.error=`金额不能超过余额 ¥${this.fmt(balance)}`; return; }
         const idx = this.receivables.findIndex(r=>r.id===receivable.id);
         if (idx!==-1) { this.receivables[idx].paidAmount += amount; if (note) this.receivables[idx].note=note; }
-        this.interactions.push({ id:this._genId('I'), customerId:receivable.customerId, type:'收款', content:`收款 ¥${this.fmt(amount)}${note?'（'+note+'）':''}`, date:this.todayStr(), userId:this.currentUser.id });
+        this.interactions.push({ id:'I'+Date.now(), customerId:receivable.customerId, type:'收款', content:`收款 ¥${this.fmt(amount)}${note?'（'+note+'）':''}`, date:this.todayStr(), userId:this.currentUser.id });
         this._save(); this.payModal.show=false;
       },
       openDealModal() { this.dealModal = { show:true, customerId:'', amount:0, note:'', error:null }; },
@@ -2625,8 +2860,8 @@
         if (!(amount>0)) { this.dealModal.error='请输入成交金额'; return; }
         const idx = this.customers.findIndex(c=>c.id===customerId);
         if (idx!==-1) { this.customers[idx].stage='Closed'; this.customers[idx].lastInteract=this.todayStr(); }
-        this.receivables.push({ id:this._genId('R'), customerId, totalAmount:amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:note||'手动登记成交' });
-        this.interactions.push({ id:this._genId('I'), customerId, type:'成交', content:`登记成交 ¥${this.fmt(amount)}`, date:this.todayStr(), userId:this.currentUser.id });
+        this.receivables.push({ id:'R'+Date.now(), customerId, totalAmount:amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:note||'手动登记成交' });
+        this.interactions.push({ id:'I'+Date.now(), customerId, type:'成交', content:`登记成交 ¥${this.fmt(amount)}`, date:this.todayStr(), userId:this.currentUser.id });
         this._save(); this.dealModal.show=false;
       },
 
@@ -2722,8 +2957,7 @@
       getTeamName(userId) {
         const u = this.users.find(x=>x.id===userId);
         if (!u || !u.teamId) return '';
-        const teamNameMap = { team_a:'A组', team_b:'B组' };
-        return teamNameMap[u.teamId] ?? u.teamId;
+        return u.teamId === 'team_a' ? 'A组' : 'B组';
       },
 
       /** 角色中文标签 */
@@ -2732,6 +2966,181 @@
         if (user.role === 'director')  return '总监';
         if (user.role === 'team_lead') return '组长';
         return this.isNewbie(user) ? '新人' : '老人';
+      },
+
+      /* ─── 时间维度辅助方法 ─── */
+
+      /**
+       * 当前角色可用的时间粒度列表
+       * 总监：日/周/月/季；组长：日/周/月；销售：日/周
+       */
+      getAvailableRanges() {
+        if (this.isDirector())  return ['day','week','month','quarter'];
+        if (this.isTeamLead())  return ['day','week','month'];
+        return ['day','week'];
+      },
+
+      /** 时间粒度对应的中文标签 */
+      getRangeLabel(range) {
+        return { day:'今日', week:'本周', month:'本月', quarter:'本季' }[range] || range;
+      },
+
+      /** 当前 timeRange 的起始 Date 对象（本地时间 0 点） */
+      getRangeStart() {
+        const now = new Date();
+        if (this.timeRange === 'day') {
+          return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        }
+        if (this.timeRange === 'week') {
+          // 周一为起点
+          const day = now.getDay() || 7;
+          const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (day - 1));
+          return d;
+        }
+        if (this.timeRange === 'month') {
+          return new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+        if (this.timeRange === 'quarter') {
+          const q = Math.floor(now.getMonth() / 3);
+          return new Date(now.getFullYear(), q * 3, 1);
+        }
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      },
+
+      /**
+       * 判断日期字符串是否落在当前时间段内
+       * @param {string} dateStr - YYYY-MM-DD 格式
+       */
+      isInRange(dateStr) {
+        if (!dateStr) return false;
+        const d = new Date(dateStr);
+        return d >= this.getRangeStart() && d <= new Date();
+      },
+
+      /** 切换时间维度，确保角色不支持的粒度自动降级 */
+      setTimeRange(range) {
+        const allowed = this.getAvailableRanges();
+        this.timeRange = allowed.includes(range) ? range : allowed[allowed.length - 1];
+      },
+
+      /**
+       * 获取指定用户在当前时间段内的互动记录
+       * @param {string} userId
+       */
+      getInteractionsInRange(userId) {
+        return this.interactions.filter(
+          i => i.userId === userId && this.isInRange(i.date)
+        );
+      },
+
+      /**
+       * 本期触达次数（AI 话术 / 手动联系均计入）
+       * @param {string} userId
+       */
+      getPeriodOutreach(userId) {
+        return this.getInteractionsInRange(userId).length;
+      },
+
+      /**
+       * 本期有互动的客户数（去重 customerId）
+       * @param {string} userId
+       */
+      getPeriodActiveCust(userId) {
+        const ids = new Set(this.getInteractionsInRange(userId).map(i => i.customerId));
+        return ids.size;
+      },
+
+      /**
+       * 本期有回复的互动数（type 包含"回复"/"回"字样 或 notes 包含"回"）
+       * @param {string} userId
+       */
+      getPeriodReplied(userId) {
+        return this.getInteractionsInRange(userId)
+          .filter(i => (i.notes||'').includes('回') || (i.type||'').includes('回')).length;
+      },
+
+      /**
+       * 本期逾期账款条数（dueDate 在范围内且 status==='overdue'）
+       * @param {string[]} userIds - 要汇总的用户 id 列表
+       */
+      getPeriodOverdue(userIds) {
+        return this.receivables.filter(
+          r => userIds.includes(r.ownerId) && r.status === 'overdue' && this.isInRange(r.dueDate)
+        ).length;
+      },
+
+      /**
+       * 返回当前角色可见的所有用户 ID 列表（含自身）
+       * 供汇总类指标使用
+       */
+      getVisibleUserIds() {
+        if (this.isDirector()) return this.users.map(u => u.id);
+        if (this.isTeamLead()) {
+          const reports = this.users.filter(u => u.managerId === this.currentUser.id);
+          return [this.currentUser.id, ...reports.map(u => u.id)];
+        }
+        return [this.currentUser.id];
+      },
+
+      /**
+       * 汇总多人的本期触达总数
+       * @param {string[]} userIds
+       */
+      getPeriodOutreachSum(userIds) {
+        return userIds.reduce((sum, uid) => sum + this.getPeriodOutreach(uid), 0);
+      },
+
+      /**
+       * 汇总多人的本期活跃客户（去重）
+       * @param {string[]} userIds
+       */
+      getPeriodActiveCustSum(userIds) {
+        const ids = new Set();
+        userIds.forEach(uid => {
+          this.getInteractionsInRange(uid).forEach(i => ids.add(i.customerId));
+        });
+        return ids.size;
+      },
+
+      /**
+       * 指定用户在当前时间段内新建（createdAt 在范围内）的客户数
+       * @param {string} userId
+       */
+      getPeriodNewCust(userId) {
+        return this.customers.filter(
+          c => c.ownerId === userId && c.stage !== 'unassigned' && this.isInRange(c.createdAt)
+        ).length;
+      },
+
+      /**
+       * 多人本期新建客户数汇总
+       * @param {string[]} userIds
+       */
+      getPeriodNewCustSum(userIds) {
+        return userIds.reduce((sum, uid) => sum + this.getPeriodNewCust(uid), 0);
+      },
+
+      /**
+       * 本期回复率（period 范围内互动中有回复的比例）
+       * @param {string} userId
+       * @returns {{ reached:number, replied:number, status:string }}
+       */
+      getPeriodResponseRate(userId) {
+        const inRange = this.getInteractionsInRange(userId);
+        const reached = inRange.length;
+        if (reached === 0) return { reached:0, replied:0, status:'gray' };
+        const replied = inRange.filter(i =>
+          (i.content||'').includes('回复') ||
+          (i.content||'').includes('客户回复') ||
+          (i.type||'').includes('回')
+        ).length;
+        const rate = replied / reached;
+        const greenThreshold  = (this.rules?.replyRateGreen  ?? 50) / 100;
+        const yellowThreshold = (this.rules?.replyRateYellow ?? 30) / 100;
+        const status = rate >= greenThreshold ? 'green'
+          : rate >= yellowThreshold           ? 'yellow'
+          : 'red';
+        return { reached, replied, status };
       },
 
       penetrate(userId) { this.switchUser(userId); this.activeTab='tasks'; },
@@ -2744,11 +3153,15 @@
        * @returns {{ total:number, done:number, pending:number, pendingCustomers:Object[] }}
        */
       getOutreachProgress(userId) {
-        const user  = this.users.find(u=>u.id===userId);
+        const user = this.users.find(u => u.id === userId);
         if (!user) return { total:0, done:0, pending:0, pendingCustomers:[] };
         const tasks = this._getTasksForUser(user);
-        const done  = tasks.filter(t => this.isCompletedToday(t.id)).length;
-        const pendingCustomers = tasks.filter(t => !this.isCompletedToday(t.id));
+        // 用"本期"范围判断是否已触达，而非写死今日
+        const contactedInPeriod = new Set(
+          this.getInteractionsInRange(userId).map(i => i.customerId)
+        );
+        const done             = tasks.filter(t => contactedInPeriod.has(t.id)).length;
+        const pendingCustomers = tasks.filter(t => !contactedInPeriod.has(t.id));
         return { total:tasks.length, done, pending:tasks.length-done, pendingCustomers };
       },
 
@@ -2762,29 +3175,22 @@
         const mine  = this.customers.filter(c=>c.ownerId===uid && c.stage!=='unassigned');
         const days  = this.getDaysSinceJoin(user);
         const tasks = [];
-
-        // S 类客户维护（新人老人都要做）
-        mine.filter(c=>c.level==='S')
-          .slice(0, this.rules.veteranTaskCount)
-          .forEach(c => {
-            const overdueR = this.receivables.find(r=>r.customerId===c.id && this.getReceivableStatus(r)==='red');
-            tasks.push({...c, taskType:overdueR?'overdue':'s_followup', receivable:overdueR||null});
-          });
-
-        // 潜在客户触达：新人多（newbieTaskCount），老人少（2个）
-        const potLimit = days < this.rules.newbieDays ? this.rules.newbieTaskCount : 2;
-        mine.filter(c=>c.stage==='Potential' && !tasks.find(t=>t.id===c.id))
-          .slice(0, potLimit)
-          .forEach(c => tasks.push({...c, taskType:'new_contact', receivable:null}));
-
-        // 逾期账款自动插入，去重
+        if (days < this.rules.newbieDays) {
+          mine.filter(c=>c.stage==='Potential').slice(0, this.rules.newbieTaskCount)
+            .forEach(c => tasks.push({...c, taskType:'new_contact', receivable:null}));
+        } else {
+          mine.filter(c=>c.level==='S').slice(0, this.rules.veteranTaskCount)
+            .forEach(c => {
+              const overdueR = this.receivables.find(r=>r.customerId===c.id && this.getReceivableStatus(r)==='red');
+              tasks.push({...c, taskType:overdueR?'overdue':'s_followup', receivable:overdueR||null});
+            });
+        }
         this.receivables.forEach(r => {
           const cust = this.customers.find(c=>c.id===r.customerId && c.ownerId===uid);
           if (!cust || this.getReceivableStatus(r)!=='red') return;
           if (tasks.find(t=>t.id===cust.id)) return;
           tasks.push({...cust, taskType:'overdue', receivable:r});
         });
-
         return tasks;
       },
 
@@ -2796,7 +3202,7 @@
        */
       pushReminder(customerId, salesUserId, reason) {
         this.interactions.push({
-          id:this._genId('I'), customerId,
+          id:'I'+Date.now(), customerId,
           type:'主管督催',
           content: reason || '主管提醒：请尽快跟进此客户',
           date:this.todayStr(), userId:this.currentUser.id,
@@ -2813,7 +3219,7 @@
         if (!note.trim()) return;
         if (todoType === 'assign' && !assigneeId) return;
         this.managerTodos.unshift({
-          id:this._genId('T'),
+          id:'T'+Date.now(),
           todoType,
           assigneeId: todoType==='assign' ? assigneeId : null,
           customerId: customerId || null,
@@ -2895,9 +3301,10 @@
 
       /** 确认导入：将解析结果写入 customers（stage=unassigned） */
       confirmImport() {
-        this.importModal.parsed.forEach(r => {
+        const valid = this.importModal.parsed.filter(r => r.name);
+        valid.forEach(r => {
           this.customers.push({
-            id:          this._genId('C'),
+            id:          'C' + Date.now() + Math.random().toString(36).slice(2,5),
             name:        r.name,
             level:       r.level,
             stage:       'unassigned',
@@ -2924,8 +3331,7 @@
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement('a');
         a.href = url; a.download = 'M9名单导入模板.csv';
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 300);
+        a.click(); URL.revokeObjectURL(url);
       },
 
       /**
@@ -2997,7 +3403,7 @@
           this.customers[idx].lastInteract = this.todayStr();
         }
         this.interactions.push({
-          id: this._genId('I'), customerId,
+          id: 'I'+Date.now(), customerId,
           type: '初次触达',
           content: '接受主管分配名单，开始主动触达。',
           date: this.todayStr(), userId: this.currentUser.id,
@@ -3060,14 +3466,11 @@
        * @returns {{icon:string, label:string, days:number|null, barCls:string}}
        */
       getRelationshipTemp(customer) {
-        const HOT_DAYS  = 2;
-        const WARM_DAYS = 6;
-        const COOL_DAYS = 13;
         if (!customer.lastInteract) return { icon:'🥶', label:'从未触达', days:null, barCls:'bg-slate-200' };
         const days = Math.floor((new Date(this.todayStr()) - new Date(customer.lastInteract)) / 86400000);
-        if (days <= HOT_DAYS)  return { icon:'🔥', label:`${days}天前`, days, barCls:'bg-red-400' };
-        if (days <= WARM_DAYS) return { icon:'😊', label:`${days}天前`, days, barCls:'bg-amber-400' };
-        if (days <= COOL_DAYS) return { icon:'😐', label:`${days}天前`, days, barCls:'bg-slate-300' };
+        if (days <= 2)  return { icon:'🔥', label:`${days}天前`, days, barCls:'bg-red-400' };
+        if (days <= 6)  return { icon:'😊', label:`${days}天前`, days, barCls:'bg-amber-400' };
+        if (days <= 13) return { icon:'😐', label:`${days}天前`, days, barCls:'bg-slate-300' };
         return { icon:'🥶', label:`${days}天前`, days, barCls:'bg-blue-200' };
       },
 
@@ -3078,124 +3481,114 @@
        */
       getLatestInteraction(customerId) {
         const list = this.getCustomerInteractions(customerId);
-        return list.length > 0 ? list[0] : null;
+        return list.length > 0 ? list[list.length - 1] : null;
       },
 
       // ── Hermes 智能提醒 ──────────────────────────
 
+      /**
+       * 根据 tab 和当前用户状态生成 Hermes 洞察消息列表
+       * @param {'tasks'|'funnel'|'receivables'|'manager'} tab
+       * @returns {Array<{level:'warn'|'tip'|'praise', icon:string, text:string, sub?:string}>}
+       */
       getHermesMsgs(tab) {
         if (!this.currentUser) return [];
-        const dispatch = {
-          tasks:       () => this._hermesTasksMsgs(),
-          funnel:      () => this._hermesFunnelMsgs(),
-          receivables: () => this._hermesReceivablesMsgs(),
-          manager:     () => this._hermesManagerMsgs(),
-        };
-        return dispatch[tab]?.() ?? [];
-      },
-
-      _hermesTasksMsgs() {
         const msgs = [];
-        if (this.hasManageView()) {
-          const redN     = this.getReceivablesByStatusAll('red').length;
-          const yelN     = this.getReceivablesByStatusAll('yellow').length;
-          const lagSales = this.getSalesUsers().filter(u => this.getOutreachProgress(u.id).pending > 0);
-          if (redN > 0)
-            msgs.push({ level:'warn',   icon:'🔴', text:`${redN} 笔账款已逾期，每推迟一天坏账风险上升。`, sub:'建议立即推送催收提醒', action:{ tab:'receivables', label:'查看账款 →' } });
-          if (yelN > 0)
-            msgs.push({ level:'warn',   icon:'🟡', text:`${yelN} 笔账款 7 天内到期，提前确认销售跟进计划。`, action:{ tab:'receivables', label:'查看账款 →' } });
-          if (lagSales.length > 0)
-            msgs.push({ level:'tip',    icon:'📞', text:`${lagSales.map(u=>u.name).join('、')} 今日触达未完成，建议穿透查看执行情况。`, action:{ tab:'manager', label:'查看进度 →' } });
-          if (redN===0 && yelN===0 && lagSales.length===0)
-            msgs.push({ level:'praise', icon:'✨', text:'全组今日执行状态良好，无异常需要处理！' });
-        } else {
-          const tasks    = this.getTodayTasks();
-          const doneN    = tasks.filter(t => this.isCompletedToday(t.id)).length;
-          const overdueN = tasks.filter(t => t.taskType === 'overdue').length;
-          const rr       = this.getResponseRate(this.currentUser.id);
-          const lowN     = tasks.filter(t => this.getCompleteness(t) < 40).length;
-          const pending  = this.getPendingLeads().length;
-          if (overdueN > 0)
-            msgs.push({ level:'warn',   icon:'🔴', text:`有 ${overdueN} 笔逾期账款，应收回收是今日最高优先级！`, action:{ tab:'receivables', label:'去处理 →' } });
-          if (pending > 0)
-            msgs.push({ level:'warn',   icon:'📬', text:`有 ${pending} 条名单待接受，及早接受后即可开始跟进。`, action:{ tab:'funnel', label:'去接受 →' } });
-          if (rr.status === 'red')
-            msgs.push({ level:'warn',   icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 严重偏低，话术或触达时机需要调整。`, action:{ tab:'funnel', label:'看漏斗 →' } });
-          else if (rr.status === 'yellow')
-            msgs.push({ level:'tip',    icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 偏低，建议换个时段重新触达沉默客户。`, action:{ tab:'funnel', label:'看漏斗 →' } });
-          if (lowN > 0)
-            msgs.push({ level:'tip',    icon:'📋', text:`${lowN} 个任务客户资料不完整，完善后 AI 话术质量显著提升。`, action:{ tab:'funnel', label:'完善资料 →' } });
-          if (doneN === tasks.length && tasks.length > 0)
-            msgs.push({ level:'praise', icon:'🎉', text:'今日任务全部完成！Hermes 为你的执行力点赞。' });
-          else if (tasks.length > 0)
-            msgs.push({ level:'tip',    icon:'⏱', text:`今日完成 ${doneN}/${tasks.length}，还剩 ${tasks.length-doneN} 个待处理，加油！`, action:{ tab:'tasks', label:'去处理 →', resetFilter:null } });
-          if (msgs.length === 0)
-            msgs.push({ level:'tip',    icon:'👋', text:'今日暂无紧急预警，保持节奏继续推进！' });
+        const isManager = this.hasManageView();
+
+        if (tab === 'tasks') {
+          if (isManager) {
+            const redN     = this.getReceivablesByStatusAll('red').length;
+            const yelN     = this.getReceivablesByStatusAll('yellow').length;
+            const lagSales = this.getSalesUsers().filter(u => this.getOutreachProgress(u.id).pending > 0);
+            if (redN > 0)
+              msgs.push({ level:'warn',   icon:'🔴', text:`${redN} 笔账款已逾期，每推迟一天坏账风险上升。`, sub:'建议立即推送催收提醒', action:{ tab:'receivables', label:'查看账款 →' } });
+            if (yelN > 0)
+              msgs.push({ level:'warn',   icon:'🟡', text:`${yelN} 笔账款 7 天内到期，提前确认销售跟进计划。`, action:{ tab:'receivables', label:'查看账款 →' } });
+            if (lagSales.length > 0)
+              msgs.push({ level:'tip',    icon:'📞', text:`${lagSales.map(u=>u.name).join('、')} 今日触达未完成，建议穿透查看执行情况。`, action:{ tab:'manager', label:'查看进度 →' } });
+            if (redN===0 && yelN===0 && lagSales.length===0)
+              msgs.push({ level:'praise', icon:'✨', text:'全组今日执行状态良好，无异常需要处理！' });
+          } else {
+            const tasks    = this.getTodayTasks();
+            const doneN    = tasks.filter(t => this.isCompletedToday(t.id)).length;
+            const overdueN = tasks.filter(t => t.taskType === 'overdue').length;
+            const rr       = this.getResponseRate(this.currentUser.id);
+            const lowN     = tasks.filter(t => this.getCompleteness(t) < 40).length;
+            const pending  = this.getPendingLeads().length;
+            if (overdueN > 0)
+              msgs.push({ level:'warn',   icon:'🔴', text:`有 ${overdueN} 笔逾期账款，应收回收是今日最高优先级！`, action:{ tab:'receivables', label:'去处理 →' } });
+            if (pending > 0)
+              msgs.push({ level:'warn',   icon:'📬', text:`有 ${pending} 条名单待接受，及早接受后即可开始跟进。`, action:{ tab:'funnel', label:'去接受 →' } });
+            if (rr.status === 'red')
+              msgs.push({ level:'warn',   icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 严重偏低，话术或触达时机需要调整。`, action:{ tab:'funnel', label:'看漏斗 →' } });
+            else if (rr.status === 'yellow')
+              msgs.push({ level:'tip',    icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 偏低，建议换个时段重新触达沉默客户。`, action:{ tab:'funnel', label:'看漏斗 →' } });
+            if (lowN > 0)
+              msgs.push({ level:'tip',    icon:'📋', text:`${lowN} 个任务客户资料不完整，完善后 AI 话术质量显著提升。`, action:{ tab:'funnel', label:'完善资料 →' } });
+            if (doneN === tasks.length && tasks.length > 0)
+              msgs.push({ level:'praise', icon:'🎉', text:'今日任务全部完成！Hermes 为你的执行力点赞。' });
+            else if (tasks.length > 0)
+              msgs.push({ level:'tip',    icon:'⏱', text:`今日完成 ${doneN}/${tasks.length}，还剩 ${tasks.length-doneN} 个待处理，加油！`, action:{ tab:'tasks', label:'去处理 →', resetFilter:null } });
+            if (msgs.length === 0)
+              msgs.push({ level:'tip',    icon:'👋', text:'今日暂无紧急预警，保持节奏继续推进！' });
+          }
         }
-        return msgs;
-      },
 
-      _hermesFunnelMsgs() {
-        const msgs    = [];
-        const today   = new Date(this.todayStr());
-        const STUCK   = 7;
-        const isManager = this.hasManageView();
-        const stuck   = this.customers.filter(c => {
-          if (!isManager && c.ownerId !== this.currentUser.id) return false;
-          if (['Potential','Closed','unassigned'].includes(c.stage)) return false;
-          if (!c.lastInteract) return true;
-          return (today - new Date(c.lastInteract)) / 86400000 >= STUCK;
-        });
-        if (stuck.length > 0)
-          msgs.push({ level:'warn',   icon:'⏸', text:`${stuck.length} 个客户停滞 ≥${STUCK} 天未推进，冷却风险升高。`, sub: stuck.slice(0,3).map(c=>c.name).join('、')+(stuck.length>3?`等${stuck.length}个`:'') });
-        const emptyMid = ['Reaching','Replied','Meeting'].filter(s => this.getFunnelCount(s) === 0);
-        if (emptyMid.length > 0)
-          msgs.push({ level:'tip',    icon:'📊', text:`${emptyMid.map(s=>this.funnelStages.find(f=>f.id===s)?.label||s).join(' / ')} 阶段为空，漏斗断层影响下月业绩。` });
-        const intentN = this.getFunnelCount('Intent');
-        if (intentN > 0)
-          msgs.push({ level:'tip',    icon:'🎯', text:`${intentN} 个意向客户等待成交，抓住窗口期推进签单！`, action:{ tab:'receivables', label:'登记成交 →' } });
-        if (msgs.length === 0)
-          msgs.push({ level:'praise', icon:'✅', text:'漏斗各阶段分布均衡，继续保持推进节奏！' });
-        return msgs;
-      },
+        if (tab === 'funnel') {
+          const today   = new Date(this.todayStr());
+          const STUCK   = 7;
+          const stuck   = this.customers.filter(c => {
+            if (!isManager && c.ownerId !== this.currentUser.id) return false;
+            if (['Potential','Closed','unassigned'].includes(c.stage)) return false;
+            if (!c.lastInteract) return true;
+            return (today - new Date(c.lastInteract)) / 86400000 >= STUCK;
+          });
+          if (stuck.length > 0)
+            msgs.push({ level:'warn',   icon:'⏸', text:`${stuck.length} 个客户停滞 ≥${STUCK} 天未推进，冷却风险升高。`, sub: stuck.slice(0,3).map(c=>c.name).join('、')+(stuck.length>3?`等${stuck.length}个`:'') });
+          const emptyMid = ['Reaching','Replied','Meeting'].filter(s => this.getFunnelCount(s) === 0);
+          if (emptyMid.length > 0)
+            msgs.push({ level:'tip',    icon:'📊', text:`${emptyMid.map(s=>this.funnelStages.find(f=>f.id===s)?.label||s).join(' / ')} 阶段为空，漏斗断层影响下月业绩。` });
+          const intentN = this.getFunnelCount('Intent');
+          if (intentN > 0)
+            msgs.push({ level:'tip',    icon:'🎯', text:`${intentN} 个意向客户等待成交，抓住窗口期推进签单！`, action:{ tab:'receivables', label:'登记成交 →' } });
+          if (msgs.length === 0)
+            msgs.push({ level:'praise', icon:'✅', text:'漏斗各阶段分布均衡，继续保持推进节奏！' });
+        }
 
-      _hermesReceivablesMsgs() {
-        const msgs      = [];
-        const isManager = this.hasManageView();
-        const redList   = isManager ? this.getReceivablesByStatusAll('red')    : this.getReceivablesByStatus('red');
-        const yelList   = isManager ? this.getReceivablesByStatusAll('yellow') : this.getReceivablesByStatus('yellow');
-        const all       = isManager ? this.receivables : this.getMyReceivables();
-        const overdueAmt = redList.reduce((s,r)=>s+(r.totalAmount-r.paidAmount),0);
-        if (redList.length > 0)
-          msgs.push({ level:'warn',   icon:'🔴', text:`${redList.length} 笔已逾期，逾期余额 ¥${this.fmt(overdueAmt)}，请立即跟进。`, sub:'逾期越久坏账概率越高' });
-        if (yelList.length > 0)
-          msgs.push({ level:'warn',   icon:'🟡', text:`${yelList.length} 笔临期（7天内），建议提前确认收款计划。` });
-        if (all.length === 0)
-          msgs.push({ level:'tip',    icon:'💰', text:'暂无应收记录，成交登记后账款将自动生成。', action:{ tab:'funnel', label:'去成交 →' } });
-        else if (redList.length === 0 && yelList.length === 0)
-          msgs.push({ level:'praise', icon:'💚', text:`应收账款状态健康，余额 ¥${this.fmt(this.sumBalance(all))} 均在账期内，继续保持！` });
-        return msgs;
-      },
+        if (tab === 'receivables') {
+          const redList    = isManager ? this.getReceivablesByStatusAll('red')    : this.getReceivablesByStatus('red');
+          const yelList    = isManager ? this.getReceivablesByStatusAll('yellow') : this.getReceivablesByStatus('yellow');
+          const all        = isManager ? this.receivables : this.getMyReceivables();
+          const overdueAmt = redList.reduce((s,r)=>s+(r.totalAmount-r.paidAmount),0);
+          if (redList.length > 0)
+            msgs.push({ level:'warn',   icon:'🔴', text:`${redList.length} 笔已逾期，逾期余额 ¥${this.fmt(overdueAmt)}，请立即跟进。`, sub:'逾期越久坏账概率越高' });
+          if (yelList.length > 0)
+            msgs.push({ level:'warn',   icon:'🟡', text:`${yelList.length} 笔临期（7天内），建议提前确认收款计划。` });
+          if (all.length === 0)
+            msgs.push({ level:'tip',    icon:'💰', text:'暂无应收记录，成交登记后账款将自动生成。', action:{ tab:'funnel', label:'去成交 →' } });
+          else if (redList.length === 0 && yelList.length === 0)
+            msgs.push({ level:'praise', icon:'💚', text:`应收账款状态健康，余额 ¥${this.fmt(this.sumBalance(all))} 均在账期内，继续保持！` });
+        }
 
-      _hermesManagerMsgs() {
-        const msgs      = [];
-        const redList   = this.getReceivablesByStatusAll('red');
-        const redOwners = new Set(redList.map(r => this.getCustomerOwner(r.customerId)));
-        const anomalyRed = this.getSalesUsers().filter(u =>
-          redOwners.has(u.id) ||
-          this.getResponseRate(u.id).status === 'red' ||
-          this.getConversionRate(u.id).status === 'red'
-        ).length;
-        const unassignedN = this.customers.filter(c=>c.stage==='unassigned').length;
-        const lowVPS      = this.getSalesUsers().filter(u => this.getCompletenessStats(u.id).red > 0);
-        if (anomalyRed > 0)
-          msgs.push({ level:'warn',   icon:'🚨', text:`${anomalyRed} 名成员存在红色异常指标，需要重点介入。`, sub:'见下方三色异常面板' });
-        if (unassignedN > 0)
-          msgs.push({ level:'tip',    icon:'📋', text:`名单库有 ${unassignedN} 条线索待分配，越早分发跟进越及时。`, action:{ tab:'manager', label:'去分配 →' } });
-        if (lowVPS.length > 0)
-          msgs.push({ level:'tip',    icon:'📝', text:`${lowVPS.map(u=>u.name).join('、')} 名下客户资料不完整，影响 AI 话术质量。`, action:{ tab:'manager', label:'查看明细 →' } });
-        if (msgs.length === 0)
-          msgs.push({ level:'praise', icon:'🌟', text:'全组指标暂无异常，团队运转良好！' });
+        if (tab === 'manager') {
+          const anomalyRed  = this.getSalesUsers().filter(u =>
+            this.getReceivablesByStatusAll('red').some(r => this.getCustomerOwner(r.customerId)===u.id) ||
+            this.getResponseRate(u.id).status === 'red' ||
+            this.getConversionRate(u.id).status === 'red'
+          ).length;
+          const unassignedN = this.customers.filter(c=>c.stage==='unassigned').length;
+          const lowVPS      = this.getSalesUsers().filter(u => this.getCompletenessStats(u.id).red > 0);
+          if (anomalyRed > 0)
+            msgs.push({ level:'warn',   icon:'🚨', text:`${anomalyRed} 名成员存在红色异常指标，需要重点介入。`, sub:'见下方三色异常面板' });
+          if (unassignedN > 0)
+            msgs.push({ level:'tip',    icon:'📋', text:`名单库有 ${unassignedN} 条线索待分配，越早分发跟进越及时。`, action:{ tab:'manager', label:'去分配 →' } });
+          if (lowVPS.length > 0)
+            msgs.push({ level:'tip',    icon:'📝', text:`${lowVPS.map(u=>u.name).join('、')} 名下客户资料不完整，影响 AI 话术质量。`, action:{ tab:'manager', label:'查看明细 →' } });
+          if (msgs.length === 0)
+            msgs.push({ level:'praise', icon:'🌟', text:'全组指标暂无异常，团队运转良好！' });
+        }
+
         return msgs;
       },
 
@@ -3271,7 +3664,7 @@
         const won  = mine.filter(c=>c.stage==='Closed').length;
         if (opps===0) return { rate:0, status:'gray', opps:0, won:0 };
         const rate   = Math.round(won/opps*100);
-        const status = rate < this.rules.conversionRateRed ? 'red' : rate < this.rules.conversionRateYellow ? 'yellow' : 'green';
+        const status = rate < this.rules.responseRateRed ? 'red' : rate < this.rules.responseRateYellow ? 'yellow' : 'green';
         return { rate, status, opps, won };
       },
 
@@ -3299,7 +3692,7 @@
       adoptScript() {
         const cust   = this.agentModal.customer;
         const script = this.agentModal.editMode ? this.agentModal.editedScript : this.agentModal.script;
-        this.interactions.push({ id:this._genId('I'), customerId:cust.id, type:'AI话术触达', content:script, date:this.todayStr(), userId:this.currentUser.id });
+        this.interactions.push({ id:'I'+Date.now(), customerId:cust.id, type:'AI话术触达', content:script, date:this.todayStr(), userId:this.currentUser.id });
         const idx = this.customers.findIndex(c=>c.id===cust.id);
         if (idx!==-1) {
           this.customers[idx].lastInteract = this.todayStr();
@@ -3321,8 +3714,14 @@
 
       // ── 辅助 ──
 
-      _genId(prefix='') { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2,7); },
-      switchUser(uid) { this.currentUser = this.users.find(u=>u.id===uid)||null; this.activeTab = 'tasks'; },
+      switchUser(uid) {
+        this.currentUser = this.users.find(u=>u.id===uid)||null;
+        this.activeTab   = 'tasks';
+        // 切换角色时重置到该角色默认的时间维度（总监=季，组长=月，销售=周）
+        if (this.isDirector())       this.timeRange = 'quarter';
+        else if (this.isTeamLead())  this.timeRange = 'month';
+        else                         this.timeRange = 'week';
+      },
       todayStr()      { return new Date().toISOString().split('T')[0]; },
       getDueDate30()  { const d=new Date(); d.setDate(d.getDate()+30); return d.toISOString().split('T')[0]; },
       getDaysSinceJoin(user) { if (!user||!user.joinDate) return 0; return Math.floor((new Date()-new Date(user.joinDate))/86400000); },
