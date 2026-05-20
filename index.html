@@ -1,0 +1,3336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>M9 客户全周期管理</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    .fade-in  { animation: fadeIn 0.25s ease-out; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+    .pulse-dot { animation: pulseDot 1.5s infinite; }
+    @keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .border-red-stripe    { border-left: 4px solid #ef4444; }
+    .border-yellow-stripe { border-left: 4px solid #f59e0b; }
+    .border-green-stripe  { border-left: 4px solid #10b981; }
+    .funnel-board { display:flex; gap:.75rem; overflow-x:auto; padding-bottom:1rem; }
+    .funnel-col   { flex-shrink:0; width:11.5rem; }
+    .hermes-wing  { animation: hermesFloat 3s ease-in-out infinite; }
+    @keyframes hermesFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+  </style>
+</head>
+<body x-data="appData()" x-init="init()" class="bg-slate-50 min-h-screen text-sm">
+
+<!-- ═══ 顶部导航 ═══ -->
+<header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+  <div class="max-w-7xl mx-auto px-4 flex items-center justify-between h-14 gap-4">
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+        <span class="text-white text-xs font-bold">M9</span>
+      </div>
+      <span class="font-semibold text-slate-800 hidden sm:block">客户全周期管理</span>
+    </div>
+    <!-- 用户切换（按小组分组展示） -->
+    <div class="flex items-center gap-1 flex-wrap">
+      <span class="text-xs text-slate-400 mr-0.5 hidden sm:block">切换：</span>
+      <template x-for="u in users" :key="u.id">
+        <button @click="switchUser(u.id)"
+          class="px-2 py-0.5 rounded-full text-xs font-medium transition-all border"
+          :class="currentUser && currentUser.id===u.id
+            ? (u.role==='director'?'bg-indigo-600 text-white border-indigo-600':u.role==='team_lead'?'bg-amber-500 text-white border-amber-500':'bg-emerald-600 text-white border-emerald-600')
+            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'">
+          <span x-text="u.name"></span>
+        </button>
+      </template>
+    </div>
+    <!-- 当前用户状态 -->
+    <div class="flex items-center gap-1.5 flex-shrink-0">
+      <template x-if="currentUser">
+        <div class="flex items-center gap-1.5">
+          <div class="w-2 h-2 rounded-full pulse-dot"
+               :class="currentUser.role==='director'?'bg-indigo-500':currentUser.role==='team_lead'?'bg-amber-500':'bg-emerald-400'"></div>
+          <span class="text-xs text-slate-600" x-text="currentUser.name"></span>
+          <span class="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                :class="currentUser.role==='director'?'bg-indigo-100 text-indigo-700':currentUser.role==='team_lead'?'bg-amber-100 text-amber-700':isNewbie(currentUser)?'bg-sky-100 text-sky-700':'bg-emerald-100 text-emerald-700'"
+                x-text="currentUser.role==='director'?'总监':currentUser.role==='team_lead'?'组长':isNewbie(currentUser)?'新人':'老人'"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+</header>
+
+<!-- ═══ Tab 导航 ═══ -->
+<nav class="bg-white border-b border-slate-100">
+  <div class="max-w-7xl mx-auto px-4 flex">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button @click="activeTab=tab.id"
+        :class="activeTab===tab.id?'border-indigo-600 text-indigo-600 font-semibold':'border-transparent text-slate-500 hover:text-slate-700'"
+        class="border-b-2 px-4 py-3 text-xs transition-all whitespace-nowrap relative">
+        <span x-text="tab.label"></span>
+        <!-- 漏斗 Tab 待接受徽章 -->
+        <span x-show="tab.id==='funnel' && currentUser && currentUser.role==='sales' && getPendingLeads().length>0"
+              class="absolute -top-0.5 -right-0.5 bg-amber-500 text-white text-xs font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none"
+              x-text="getPendingLeads().length"></span>
+      </button>
+    </template>
+  </div>
+</nav>
+
+<!-- ═══ 主内容 ═══ -->
+<main class="max-w-7xl mx-auto px-4 py-6 pb-20">
+
+  <!-- ─── Tab 1: 今日任务 ─── -->
+  <div x-show="activeTab==='tasks'" x-cloak class="fade-in">
+    <template x-if="currentUser && hasManageView()">
+      <div class="fade-in">
+        <!-- 页头 -->
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h1 class="text-base font-bold text-slate-800"
+                x-text="isDirector()?'总监今日待办':'组长今日待办'"></h1>
+            <p class="text-xs text-slate-400 mt-0.5"
+               x-text="todayStr()+(isDirector()?' · 部门全员督导视角':' · '+getTeamName(currentUser.id)+'组督导视角')"></p>
+          </div>
+          <span class="bg-red-50 text-red-600 text-xs px-3 py-1.5 rounded-full font-semibold border border-red-200"
+                x-show="getManagerPendingCount()>0"
+                x-text="getManagerPendingCount()+' 项待处理'"></span>
+          <span class="bg-emerald-50 text-emerald-600 text-xs px-3 py-1.5 rounded-full font-semibold border border-emerald-200"
+                x-show="getManagerPendingCount()===0">全部处理完毕 ✓</span>
+        </div>
+
+        <!-- Hermes 提醒 -->
+        <div class="mb-4 rounded-xl border overflow-hidden" x-show="getHermesMsgs('tasks').length>0"
+             :class="getHermesCls(getHermesMsgs('tasks')[0]?.level)">
+          <div class="flex items-center gap-2 px-3 py-2 border-b"
+               :class="getHermesCls(getHermesMsgs('tasks')[0]?.level)">
+            <span class="hermes-wing text-base">⚡</span>
+            <span class="text-xs font-bold" :class="getHermesTextCls(getHermesMsgs('tasks')[0]?.level)">Hermes · 今日洞察</span>
+            <span class="text-xs animate-pulse opacity-50 ml-1" :class="getHermesTextCls(getHermesMsgs('tasks')[0]?.level)">● 自进化</span>
+            <span class="ml-auto text-xs opacity-50" :class="getHermesTextCls(getHermesMsgs('tasks')[0]?.level)"
+                  x-text="hermesLearnCount>0 ? '已学习'+hermesLearnCount+'次 · ' +getHermesMsgs('tasks').length+'条' : getHermesMsgs('tasks').length+'条'"></span>
+          </div>
+          <div class="divide-y divide-white/60">
+            <template x-for="(msg,i) in getHermesMsgs('tasks')" :key="i">
+              <div class="px-3 py-2.5 flex items-center gap-2 transition-all"
+                   :class="msg.action ? 'cursor-pointer hover:bg-white/70 active:scale-[0.99]' : ''"
+                   @click="hermesAction(msg)">
+                <span class="text-sm flex-shrink-0" x-text="msg.icon"></span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs leading-relaxed" :class="getHermesTextCls(msg.level)" x-text="msg.text"></p>
+                  <p class="text-xs opacity-60 mt-0.5" :class="getHermesTextCls(msg.level)" x-show="msg.sub" x-text="msg.sub"></p>
+                </div>
+                <template x-if="msg.action">
+                  <span class="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border whitespace-nowrap"
+                        :class="msg.level==='warn'?'bg-red-50 text-red-600 border-red-200':msg.level==='praise'?'bg-emerald-50 text-emerald-600 border-emerald-200':'bg-violet-50 text-violet-600 border-violet-200'"
+                        x-text="msg.action.label"></span>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ① 逾期收款催收 -->
+        <div class="mb-4" x-show="getReceivablesByStatusAll('red').length>0">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-2 h-2 rounded-full bg-red-500 pulse-dot"></div>
+            <span class="text-xs font-bold text-red-700">逾期收款催收</span>
+            <span class="text-xs text-red-400 ml-auto" x-text="getReceivablesByStatusAll('red').length+'笔'"></span>
+          </div>
+          <div class="space-y-2">
+            <template x-for="r in getReceivablesByStatusAll('red')" :key="r.id">
+              <div class="bg-white border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+                   x-data="{pushed:false, pushing:false}">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-semibold text-slate-800 text-xs" x-text="getCustomerName(r.customerId)"></span>
+                    <span class="text-xs text-slate-400" x-text="'归属：'+getOwnerName(getCustomerOwner(r.customerId))"></span>
+                    <span class="text-xs font-bold text-red-600" x-text="'¥'+fmt(r.totalAmount-r.paidAmount)"></span>
+                  </div>
+                  <p class="text-xs text-red-400 mt-0.5" x-text="'截止日：'+r.dueDate+' · '+r.note"></p>
+                </div>
+                <div class="flex-shrink-0">
+                  <template x-if="!pushed">
+                    <button @click="pushReminder(r.customerId, getCustomerOwner(r.customerId), '主管督催：逾期账款请尽快跟进收款'); pushed=true"
+                      class="text-xs px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold transition-all">
+                      📣 推送提醒
+                    </button>
+                  </template>
+                  <template x-if="pushed">
+                    <span class="text-xs text-emerald-600 font-medium">✓ 已推送</span>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ② 临期收款预警 -->
+        <div class="mb-4" x-show="getReceivablesByStatusAll('yellow').length>0">
+          <div class="flex items-center gap-2 mb-2">
+            <div class="w-2 h-2 rounded-full bg-amber-400"></div>
+            <span class="text-xs font-bold text-amber-700">临期收款预警</span>
+            <span class="text-xs text-amber-400 ml-auto" x-text="getReceivablesByStatusAll('yellow').length+'笔'"></span>
+          </div>
+          <div class="space-y-2">
+            <template x-for="r in getReceivablesByStatusAll('yellow')" :key="r.id">
+              <div class="bg-white border border-amber-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3"
+                   x-data="{pushed:false}">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-semibold text-slate-800 text-xs" x-text="getCustomerName(r.customerId)"></span>
+                    <span class="text-xs text-slate-400" x-text="'归属：'+getOwnerName(getCustomerOwner(r.customerId))"></span>
+                    <span class="text-xs font-bold text-amber-600" x-text="'¥'+fmt(r.totalAmount-r.paidAmount)"></span>
+                  </div>
+                  <p class="text-xs text-amber-400 mt-0.5" x-text="'截止日：'+r.dueDate"></p>
+                </div>
+                <template x-if="!pushed">
+                  <button @click="pushReminder(r.customerId, getCustomerOwner(r.customerId), '主管提醒：账款即将到期，请提前跟进'); pushed=true"
+                    class="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold transition-all">
+                    📣 提前提醒
+                  </button>
+                </template>
+                <template x-if="pushed">
+                  <span class="text-xs text-emerald-600 font-medium">✓ 已推送</span>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ③ 今日触达进度（总监：先展示小组汇总，点击展开成员；组长：直接展示成员） -->
+        <div class="mb-4">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-xs">📞</span>
+            <span class="text-xs font-bold text-slate-700">今日触达进度</span>
+          </div>
+
+          <!-- 总监视角：按小组下钻 -->
+          <template x-if="isDirector()">
+            <div class="space-y-2" x-data="{ expandedTeam: null }">
+              <template x-for="team in getTeams()" :key="team.id">
+                <div class="rounded-xl border overflow-hidden"
+                     :class="team.members.some(m=>getOutreachProgress(m.id).pending>0)?'border-slate-200 bg-white':'border-emerald-100 bg-emerald-50'">
+
+                  <!-- 小组汇总行（可点击展开） -->
+                  <button class="w-full px-4 py-3 flex items-center justify-between gap-3 text-left"
+                          @click="expandedTeam = expandedTeam===team.id ? null : team.id">
+                    <div class="flex items-center gap-2">
+                      <!-- 小组名 + 组长 -->
+                      <span class="font-bold text-slate-700 text-xs" x-text="team.name"></span>
+                      <span class="text-xs text-slate-400" x-text="'·组长 '+team.lead?.name"></span>
+                      <!-- 小组汇总进度 -->
+                      <span class="text-xs text-slate-500"
+                            x-text="team.members.reduce((s,m)=>s+getOutreachProgress(m.id).done,0)+'/'+team.members.reduce((s,m)=>s+getOutreachProgress(m.id).total,0)+' 已完成'"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <template x-if="team.members.every(m=>getOutreachProgress(m.id).pending===0)">
+                        <span class="text-xs text-emerald-600 font-medium">✓ 组内全完成</span>
+                      </template>
+                      <template x-if="team.members.some(m=>getOutreachProgress(m.id).pending>0)">
+                        <span class="text-xs text-amber-600 font-medium"
+                              x-text="team.members.reduce((s,m)=>s+getOutreachProgress(m.id).pending,0)+'个未触达'"></span>
+                      </template>
+                      <!-- 展开箭头 -->
+                      <span class="text-xs text-slate-400 transition-transform"
+                            :class="expandedTeam===team.id?'rotate-90':''"
+                            style="display:inline-block">▶</span>
+                    </div>
+                  </button>
+
+                  <!-- 展开后：成员明细 -->
+                  <template x-if="expandedTeam===team.id">
+                    <div class="border-t border-slate-100 divide-y divide-slate-50">
+                      <template x-for="u in team.members" :key="u.id">
+                        <div class="px-5 py-2.5"
+                             :class="getOutreachProgress(u.id).pending>0?'bg-white':'bg-emerald-50/60'">
+                          <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-2">
+                              <span class="text-xs font-semibold text-slate-700" x-text="u.name"></span>
+                              <span class="text-xs rounded-full px-1.5 py-0.5"
+                                    :class="u.role==='team_lead'?'bg-amber-100 text-amber-700':isNewbie(u)?'bg-sky-100 text-sky-700':'bg-emerald-100 text-emerald-700'"
+                                    x-text="getRoleLabel(u)"></span>
+                              <span class="text-xs text-slate-400"
+                                    x-text="getOutreachProgress(u.id).done+'/'+getOutreachProgress(u.id).total+' 已完成'"></span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                              <template x-if="getOutreachProgress(u.id).pending===0">
+                                <span class="text-xs text-emerald-600 font-medium">✓ 完成</span>
+                              </template>
+                              <template x-if="getOutreachProgress(u.id).pending>0">
+                                <span class="text-xs text-amber-600 font-medium"
+                                      x-text="getOutreachProgress(u.id).pending+' 个未触达'"></span>
+                              </template>
+                              <button @click="penetrate(u.id)"
+                                class="text-xs px-2 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-all">
+                                穿透↗
+                              </button>
+                            </div>
+                          </div>
+                          <!-- 未完成客户标签 -->
+                          <template x-if="getOutreachProgress(u.id).pending>0">
+                            <div class="mt-1.5 flex flex-wrap gap-1.5">
+                              <template x-for="c in getOutreachProgress(u.id).pendingCustomers" :key="c.id">
+                                <div class="flex items-center gap-1 bg-slate-50 border border-slate-100 rounded-lg px-2 py-0.5"
+                                     x-data="{pushed:false}">
+                                  <span class="text-xs text-slate-600" x-text="c.name"></span>
+                                  <template x-if="!pushed">
+                                    <button @click="pushReminder(c.id, u.id, '总监催促：请今日完成触达'); pushed=true"
+                                      class="text-xs text-red-500 hover:text-red-700 ml-1 transition-all" title="推送催促">📣</button>
+                                  </template>
+                                  <template x-if="pushed">
+                                    <span class="text-xs text-emerald-500 ml-1">✓</span>
+                                  </template>
+                                </div>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- 组长视角：直接展示本组成员（原有样式不变） -->
+          <template x-if="!isDirector()">
+            <div class="space-y-2">
+              <template x-for="u in getSalesUsers()" :key="u.id">
+                <div class="bg-white border rounded-xl px-4 py-3"
+                     :class="getOutreachProgress(u.id).pending>0?'border-slate-200':'border-emerald-100 bg-emerald-50'">
+                  <div class="flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2">
+                      <span class="font-semibold text-slate-700 text-xs" x-text="u.name"></span>
+                      <span class="text-xs text-slate-400"
+                            x-text="getOutreachProgress(u.id).done+'/'+getOutreachProgress(u.id).total+' 已完成'"></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <template x-if="getOutreachProgress(u.id).pending===0">
+                        <span class="text-xs text-emerald-600 font-medium">✓ 全部完成</span>
+                      </template>
+                      <template x-if="getOutreachProgress(u.id).pending>0">
+                        <span class="text-xs text-amber-600 font-medium"
+                              x-text="getOutreachProgress(u.id).pending+' 个未触达'"></span>
+                      </template>
+                      <button @click="penetrate(u.id)"
+                        class="text-xs px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-all">
+                        穿透查看↗
+                      </button>
+                    </div>
+                  </div>
+                  <template x-if="getOutreachProgress(u.id).pending>0">
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                      <template x-for="c in getOutreachProgress(u.id).pendingCustomers" :key="c.id">
+                        <div class="flex items-center gap-1 bg-slate-50 border border-slate-100 rounded-lg px-2 py-1"
+                             x-data="{pushed:false}">
+                          <span class="text-xs text-slate-600" x-text="c.name"></span>
+                          <template x-if="!pushed">
+                            <button @click="pushReminder(c.id, u.id, '主管催促：请今日完成触达'); pushed=true"
+                              class="text-xs text-red-500 hover:text-red-700 ml-1 transition-all" title="推送催促">📣</button>
+                          </template>
+                          <template x-if="pushed">
+                            <span class="text-xs text-emerald-500 ml-1">✓</span>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- ④ 代办清单 -->
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-xs">✏️</span>
+            <span class="text-xs font-bold text-slate-700">代办清单</span>
+            <span class="ml-auto text-xs text-slate-400"
+                  x-text="managerTodos.filter(t=>!t.done).length+' 项未完成'"></span>
+          </div>
+
+          <!-- 新增代办表单 -->
+          <div class="bg-white border border-slate-200 rounded-xl mb-3 overflow-hidden shadow-sm">
+            <!-- 类型切换 Tab -->
+            <div class="flex border-b border-slate-100">
+              <button @click="addTodoForm.todoType='assign'"
+                class="flex-1 text-xs py-2 font-semibold transition-all"
+                :class="addTodoForm.todoType==='assign'
+                  ?'bg-indigo-600 text-white'
+                  :'text-slate-500 hover:bg-slate-50'">
+                📤 分配给下级
+              </button>
+              <button @click="addTodoForm.todoType='self'"
+                class="flex-1 text-xs py-2 font-semibold transition-all border-l border-slate-100"
+                :class="addTodoForm.todoType==='self'
+                  ?'bg-violet-600 text-white'
+                  :'text-slate-500 hover:bg-slate-50'">
+                📌 上级临时代办
+              </button>
+            </div>
+
+            <!-- 分配给下级 表单 -->
+            <div x-show="addTodoForm.todoType==='assign'" class="p-3 space-y-2">
+              <div class="flex gap-2">
+                <select x-model="addTodoForm.assigneeId"
+                  class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300 flex-shrink-0">
+                  <option value="">选择下级 *</option>
+                  <template x-for="u in getSalesUsers()" :key="u.id">
+                    <option :value="u.id" x-text="u.name"></option>
+                  </template>
+                </select>
+                <select x-model="addTodoForm.customerId"
+                  class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300 flex-shrink-0">
+                  <option value="">关联客户（可选）</option>
+                  <template x-for="c in customers.filter(x=>x.stage!=='unassigned' && (!addTodoForm.assigneeId || x.ownerId===addTodoForm.assigneeId))" :key="c.id">
+                    <option :value="c.id" x-text="c.name"></option>
+                  </template>
+                </select>
+              </div>
+              <div class="flex gap-2">
+                <input type="text" x-model="addTodoForm.note"
+                  @keydown.enter="addManagerTodo()"
+                  placeholder="分配任务说明，按 Enter 提交…"
+                  class="flex-1 text-xs border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-300 min-w-0" />
+                <button @click="addManagerTodo()"
+                  :disabled="!addTodoForm.note.trim() || !addTodoForm.assigneeId"
+                  class="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
+                  :class="(addTodoForm.note.trim()&&addTodoForm.assigneeId)?'bg-indigo-600 text-white hover:bg-indigo-700':'bg-slate-100 text-slate-400 cursor-not-allowed'">
+                  分配
+                </button>
+              </div>
+            </div>
+
+            <!-- 上级临时代办：只读展示 -->
+            <div x-show="addTodoForm.todoType==='self'" class="p-3">
+              <template x-if="superiorTodos.length===0">
+                <div class="text-center py-4 text-slate-400 text-xs">暂无上级代办</div>
+              </template>
+              <div class="space-y-2">
+                <template x-for="t in superiorTodos" :key="t.id">
+                  <div class="rounded-xl border px-3 py-2.5"
+                       :class="t.urgent?'bg-red-50 border-red-200':'bg-slate-50 border-slate-200'">
+                    <div class="flex items-start gap-2">
+                      <span class="flex-shrink-0 text-sm mt-0.5" x-text="t.urgent?'🔴':'📌'"></span>
+                      <div class="flex-1 min-w-0">
+                        <p class="text-xs font-medium leading-relaxed"
+                           :class="t.urgent?'text-red-800':'text-slate-700'"
+                           x-text="t.note"></p>
+                        <div class="flex items-center gap-2 mt-1 flex-wrap">
+                          <span class="text-xs font-semibold"
+                                :class="t.urgent?'text-red-500':'text-slate-400'"
+                                x-text="'来自：'+t.from"></span>
+                          <template x-if="t.customerId">
+                            <span class="text-xs text-violet-500" x-text="'@ '+getCustomerName(t.customerId)"></span>
+                          </template>
+                          <span class="text-xs text-slate-300 ml-auto" x-text="t.createdAt"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- 代办列表 -->
+          <template x-if="managerTodos.length===0">
+            <div class="text-center py-6 text-slate-400 text-xs">暂无代办，添加一条试试？</div>
+          </template>
+          <div class="space-y-2">
+            <template x-for="todo in managerTodos" :key="todo.id">
+              <div class="bg-white border rounded-xl px-3 py-2.5 flex items-start gap-2.5 transition-all"
+                   :class="[
+                     todo.done?'opacity-50 border-slate-100':'border-slate-200',
+                     todo.todoType==='assign'?'border-l-4 border-l-indigo-400':'border-l-4 border-l-violet-400'
+                   ]">
+                <!-- 勾选 -->
+                <button @click="toggleManagerTodo(todo.id)"
+                  class="flex-shrink-0 w-4 h-4 mt-0.5 rounded border-2 transition-all flex items-center justify-center"
+                  :class="todo.done?'bg-emerald-500 border-emerald-500':'border-slate-300 hover:border-indigo-400'">
+                  <span x-show="todo.done" class="text-white text-xs leading-none">✓</span>
+                </button>
+                <!-- 内容 -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5 flex-wrap mb-0.5">
+                    <!-- 类型徽章 -->
+                    <span class="text-xs px-1.5 py-0.5 rounded font-semibold leading-none"
+                          :class="todo.todoType==='assign'?'bg-indigo-100 text-indigo-700':'bg-violet-100 text-violet-700'"
+                          x-text="todo.todoType==='assign'?'📤 分配':'📌 自记'"></span>
+                    <!-- 下级名字 -->
+                    <template x-if="todo.assigneeId">
+                      <span class="text-xs font-bold text-indigo-600"
+                            x-text="'→ '+getOwnerName(todo.assigneeId)"></span>
+                    </template>
+                    <!-- 关联客户 -->
+                    <template x-if="todo.customerId">
+                      <span class="text-xs text-slate-500" x-text="'@ '+getCustomerName(todo.customerId)"></span>
+                    </template>
+                  </div>
+                  <p class="text-xs text-slate-700 leading-relaxed"
+                     :class="todo.done?'line-through text-slate-400':''"
+                     x-text="todo.note"></p>
+                  <p class="text-xs text-slate-400 mt-0.5" x-text="todo.createdAt"></p>
+                </div>
+                <!-- 删除 -->
+                <button @click="deleteManagerTodo(todo.id)"
+                  class="flex-shrink-0 text-slate-300 hover:text-red-400 transition-all text-sm mt-0.5">✕</button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="currentUser && currentUser.role==='sales'">
+      <div>
+        <!-- 页头 -->
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h1 class="text-base font-bold text-slate-800">今日跟进任务</h1>
+            <p class="text-xs text-slate-400 mt-0.5">
+              <span x-text="todayStr()"></span> ·
+              <span x-text="isNewbie(currentUser)?'新人模式（入职'+getDaysSinceJoin(currentUser)+'天）':'老人模式（入职'+getDaysSinceJoin(currentUser)+'天）'"></span>
+            </p>
+          </div>
+          <span class="text-xs px-3 py-1.5 rounded-full font-medium transition-all"
+                :class="taskFilter?'bg-indigo-600 text-white':'bg-indigo-50 text-indigo-700'"
+                x-text="(taskFilter?getFilteredTasks().length:getTodayTasks().length)+' 个任务'"></span>
+        </div>
+
+        <!-- Hermes 提醒 -->
+        <div class="mb-4 rounded-xl border overflow-hidden" x-show="getHermesMsgs('tasks').length>0"
+             :class="getHermesCls(getHermesMsgs('tasks')[0]?.level)">
+          <div class="flex items-center gap-2 px-3 py-2 border-b"
+               :class="getHermesCls(getHermesMsgs('tasks')[0]?.level)">
+            <span class="hermes-wing text-base">⚡</span>
+            <span class="text-xs font-bold" :class="getHermesTextCls(getHermesMsgs('tasks')[0]?.level)">Hermes · 今日洞察</span>
+            <span class="ml-auto text-xs opacity-60" :class="getHermesTextCls(getHermesMsgs('tasks')[0]?.level)"
+                  x-text="getHermesMsgs('tasks').length+'条'"></span>
+          </div>
+          <div class="divide-y divide-white/60">
+            <template x-for="(msg,i) in getHermesMsgs('tasks')" :key="i">
+              <div class="px-3 py-2.5 flex items-center gap-2 transition-all"
+                   :class="msg.action ? 'cursor-pointer hover:bg-white/70 active:scale-[0.99]' : ''"
+                   @click="hermesAction(msg)">
+                <span class="text-sm flex-shrink-0" x-text="msg.icon"></span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs leading-relaxed" :class="getHermesTextCls(msg.level)" x-text="msg.text"></p>
+                  <p class="text-xs opacity-60 mt-0.5" :class="getHermesTextCls(msg.level)" x-show="msg.sub" x-text="msg.sub"></p>
+                </div>
+                <template x-if="msg.action">
+                  <span class="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border whitespace-nowrap"
+                        :class="msg.level==='warn'?'bg-red-50 text-red-600 border-red-200':msg.level==='praise'?'bg-emerald-50 text-emerald-600 border-emerald-200':'bg-violet-50 text-violet-600 border-violet-200'"
+                        x-text="msg.action.label"></span>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 三色仪表盘 -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+          <div class="bg-white border border-slate-200 rounded-xl p-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-500">💰 应收健康</span>
+              <span class="text-xs font-bold"
+                    :class="getMyOverallReceivableStatus()==='red'?'text-red-600':getMyOverallReceivableStatus()==='yellow'?'text-amber-600':getMyOverallReceivableStatus()==='green'?'text-emerald-600':'text-slate-400'"
+                    x-text="getStatusLabel(getMyOverallReceivableStatus())"></span>
+            </div>
+            <div class="text-xs text-slate-400 mt-1"
+                 x-text="getReceivablesByStatus('red').length+' 红 / '+getReceivablesByStatus('yellow').length+' 黄'"></div>
+          </div>
+          <div class="bg-white border border-slate-200 rounded-xl p-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-500">📞 回复率</span>
+              <span class="text-xs font-bold"
+                    :class="getResponseRate(currentUser.id).status==='red'?'text-red-600':getResponseRate(currentUser.id).status==='yellow'?'text-amber-600':getResponseRate(currentUser.id).status==='green'?'text-emerald-600':'text-slate-400'"
+                    x-text="getResponseRate(currentUser.id).status==='gray'?'—':getResponseRate(currentUser.id).replied+'/'+getResponseRate(currentUser.id).reached"></span>
+            </div>
+            <div class="text-xs text-slate-400 mt-1"
+                 x-text="'触达 '+getResponseRate(currentUser.id).reached+' · 回复 '+getResponseRate(currentUser.id).replied"></div>
+          </div>
+          <div class="bg-white border border-slate-200 rounded-xl p-2.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-500">🎯 转化率</span>
+              <span class="text-xs font-bold"
+                    :class="getConversionRate(currentUser.id).status==='red'?'text-red-600':getConversionRate(currentUser.id).status==='yellow'?'text-amber-600':getConversionRate(currentUser.id).status==='green'?'text-emerald-600':'text-slate-400'"
+                    x-text="getConversionRate(currentUser.id).status==='gray'?'—':getConversionRate(currentUser.id).won+'/'+getConversionRate(currentUser.id).opps"></span>
+            </div>
+            <div class="text-xs text-slate-400 mt-1"
+                 x-text="'机会 '+getConversionRate(currentUser.id).opps+' · 成交 '+getConversionRate(currentUser.id).won"></div>
+          </div>
+        </div>
+
+        <!-- 任务筛选卡（可点击） -->
+        <div class="grid grid-cols-3 gap-2 mb-4">
+          <!-- 潜在客户触达 -->
+          <button @click="taskFilter = taskFilter==='new_contact' ? null : 'new_contact'"
+            class="border rounded-lg p-2.5 text-center transition-all cursor-pointer focus:outline-none"
+            :class="taskFilter==='new_contact'
+              ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300'
+              : 'border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50'">
+            <div class="text-base mb-0.5">📞</div>
+            <div class="text-xs font-semibold text-slate-700">任务</div>
+            <div class="text-xs font-bold mt-0.5"
+                 :class="taskFilter==='new_contact'?'text-indigo-600':'text-slate-400'"
+                 x-text="getTaskCount('new_contact')+'个'"></div>
+          </button>
+          <!-- S 类维护 -->
+          <button @click="taskFilter = taskFilter==='s_followup' ? null : 's_followup'"
+            class="border rounded-lg p-2.5 text-center transition-all cursor-pointer focus:outline-none"
+            :class="taskFilter==='s_followup'
+              ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-300'
+              : 'border-slate-200 bg-white hover:border-purple-300 hover:bg-purple-50'">
+            <div class="text-base mb-0.5">⭐</div>
+            <div class="text-xs font-semibold text-slate-700">S 类维护</div>
+            <div class="text-xs font-bold mt-0.5"
+                 :class="taskFilter==='s_followup'?'text-purple-600':'text-slate-400'"
+                 x-text="getTaskCount('s_followup')+'个'"></div>
+          </button>
+          <!-- 逾期预警 -->
+          <button @click="taskFilter = taskFilter==='overdue' ? null : 'overdue'"
+            class="border rounded-lg p-2.5 text-center transition-all cursor-pointer focus:outline-none"
+            :class="taskFilter==='overdue'
+              ? 'border-red-500 bg-red-50 ring-2 ring-red-300'
+              : 'border-slate-200 bg-white hover:border-red-300 hover:bg-red-50'">
+            <div class="text-base mb-0.5">🔴</div>
+            <div class="text-xs font-semibold text-slate-700">逾期预警</div>
+            <div class="text-xs font-bold mt-0.5"
+                 :class="taskFilter==='overdue'?'text-red-600':'text-slate-400'"
+                 x-text="getTaskCount('overdue')+'个'"></div>
+          </button>
+        </div>
+
+        <!-- 筛选状态提示 -->
+        <div x-show="taskFilter" class="flex items-center justify-between mb-3 px-1">
+          <span class="text-xs text-slate-500">
+            筛选：<span class="font-semibold text-indigo-600"
+              x-text="taskFilter==='new_contact'?'潜在客户任务':taskFilter==='s_followup'?'S类维护':taskFilter==='overdue'?'逾期预警':'全部'"></span>
+            · <span x-text="getFilteredTasks().length+'条'"></span>
+          </span>
+          <button @click="taskFilter=null" class="text-xs text-slate-400 hover:text-red-500 transition-all">✕ 清除筛选</button>
+        </div>
+
+        <template x-if="getFilteredTasks().length===0">
+          <div class="text-center py-16 text-slate-400">
+            <div class="text-4xl mb-2" x-text="taskFilter?'🔍':'✅'"></div>
+            <p class="text-xs" x-text="taskFilter?'当前筛选下无任务':'今日任务全部完成！'"></p>
+          </div>
+        </template>
+
+        <!-- 任务卡片 -->
+        <div class="space-y-3">
+          <template x-for="task in getFilteredTasks()" :key="task.id+task.taskType">
+            <div class="bg-white border rounded-xl p-4 shadow-sm hover:shadow-md transition-all"
+                 :class="task.taskType==='overdue'?'border-red-200 bg-red-50':'border-slate-200'">
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex items-start gap-3 flex-1 min-w-0">
+                  <div class="w-9 h-9 rounded-lg flex items-center justify-center text-sm flex-shrink-0"
+                       :class="{'bg-red-100':task.taskType==='overdue','bg-indigo-100':task.taskType==='new_contact','bg-purple-100':task.taskType==='s_followup'}">
+                    <span x-text="task.taskType==='overdue'?'🚨':task.taskType==='s_followup'?'⭐':'📞'"></span>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                      <span class="font-semibold text-slate-800" x-text="task.name"></span>
+                      <span :class="getLevelColor(task.level)" class="text-xs px-1.5 py-0.5 rounded-full font-medium" x-text="task.level+'级'"></span>
+                      <span class="text-xs px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500" x-text="getStageLabel(task.stage)"></span>
+                      <template x-if="task.taskType==='overdue'">
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">⚠ 逾期账款</span>
+                      </template>
+                      <!-- VPS 资料不全角标 -->
+                      <template x-if="getCompleteness(task) < 40">
+                        <span class="text-xs px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">📋 资料不全</span>
+                      </template>
+                    </div>
+                    <template x-if="task.taskType==='overdue' && task.receivable">
+                      <div class="mt-1.5 text-xs text-red-600 bg-red-100 rounded-lg px-3 py-2">
+                        应收余额
+                        <span class="font-bold" x-text="'¥'+fmt(task.receivable.totalAmount-task.receivable.paidAmount)"></span>
+                        ，截止日 <span x-text="task.receivable.dueDate"></span>
+                      </div>
+                    </template>
+                    <div class="mt-1 text-xs text-slate-400">
+                      <template x-if="task.lastInteract">
+                        <span>上次触达：<span x-text="task.lastInteract"></span></span>
+                      </template>
+                      <template x-if="!task.lastInteract">
+                        <span class="text-amber-500">从未触达</span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+                <div class="flex-shrink-0 flex flex-col items-end gap-1.5">
+                  <button @click="openAgentModal(task)"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1">
+                    <span>✨</span><span>AI 话术</span>
+                  </button>
+                  <template x-if="isCompletedToday(task.id)">
+                    <span class="text-xs text-emerald-600 font-medium">✓ 今日已触达</span>
+                  </template>
+                </div>
+              </div>
+              <div class="mt-2.5" x-data="{open:false}">
+                <button @click="open=!open" class="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1">
+                  <span x-text="open?'▲':'▼'"></span>
+                  <span x-text="'交互记录（'+getCustomerInteractions(task.id).length+'条）'"></span>
+                </button>
+                <div x-show="open" x-transition class="mt-2 space-y-1.5">
+                  <template x-if="getCustomerInteractions(task.id).length===0">
+                    <p class="text-xs text-slate-300 pl-1">暂无记录</p>
+                  </template>
+                  <template x-for="log in getCustomerInteractions(task.id)" :key="log.id">
+                    <div class="bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 text-xs text-slate-600">
+                      <span class="font-medium text-slate-700" x-text="log.date+' · '+log.type"></span><br/>
+                      <span x-text="log.content"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ─── Tab 2: 漏斗看板 ─── -->
+  <div x-show="activeTab==='funnel'" x-cloak class="fade-in">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h1 class="text-base font-bold text-slate-800">六阶段漏斗看板</h1>
+        <p class="text-xs text-slate-400 mt-0.5" x-text="hasManageView()?'管理视角 · 可见范围数据':'个人漏斗'"></p>
+      </div>
+      <div class="flex gap-2 text-center">
+        <template x-for="s in funnelStages" :key="s.id">
+          <div>
+            <div class="text-xs font-bold text-slate-700" x-text="getFunnelCount(s.id)"></div>
+            <div class="text-xs text-slate-400" x-text="s.label"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ── 待接受名单面板（仅销售员且有 pending 时显示） ── -->
+    <div x-show="currentUser && currentUser.role==='sales' && getPendingLeads().length>0"
+         class="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 overflow-hidden fade-in">
+      <div class="flex items-center gap-2 px-4 py-2.5 bg-amber-100 border-b border-amber-200">
+        <span class="text-sm">📬</span>
+        <span class="text-xs font-bold text-amber-800">主管分配的待接受名单</span>
+        <span class="ml-1 bg-amber-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full"
+              x-text="getPendingLeads().length"></span>
+        <span class="ml-auto text-xs text-amber-600">接受后进入潜在客户列 · 开始跟进后归档到触达中</span>
+      </div>
+      <div class="p-3 space-y-2">
+        <template x-for="lead in getPendingLeads()" :key="lead.id">
+          <div class="bg-white rounded-xl border border-amber-200 px-4 py-3 flex items-center justify-between gap-3 shadow-sm">
+            <!-- 左：客户信息 -->
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-1.5 flex-wrap mb-1">
+                <span class="font-semibold text-slate-800 text-sm" x-text="lead.name"></span>
+                <span :class="getLevelColor(lead.level)"
+                      class="text-xs px-1.5 py-0.5 rounded-full font-medium"
+                      x-text="lead.level+'级'"></span>
+                <span x-show="lead.source"
+                      class="text-xs text-slate-400"
+                      x-text="lead.source"></span>
+                <span x-show="lead.industry"
+                      class="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded"
+                      x-text="lead.industry"></span>
+              </div>
+              <!-- VPS 完善度 -->
+              <div class="flex items-center gap-1.5">
+                <div class="w-24 bg-slate-100 rounded-full h-1 overflow-hidden">
+                  <div class="h-1 rounded-full" :class="getCompletenessCls(getCompleteness(lead))"
+                       :style="'width:'+getCompleteness(lead)+'%'"></div>
+                </div>
+                <span class="text-xs text-slate-400" x-text="'资料 '+getCompletenessStr(lead)"></span>
+              </div>
+            </div>
+            <!-- 右：操作按钮 -->
+            <div class="flex-shrink-0 flex gap-2">
+              <button @click="acceptLead(lead.id)"
+                class="text-xs px-3 py-1.5 rounded-lg border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-all">
+                ✓ 接受
+              </button>
+              <button @click="startFollowup(lead.id)"
+                class="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold transition-all flex items-center gap-1">
+                <span>🚀</span><span>接受并跟进</span>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Hermes 提醒 -->
+    <div class="mb-3 rounded-xl border overflow-hidden" x-show="getHermesMsgs('funnel').length>0"
+         :class="getHermesCls(getHermesMsgs('funnel')[0]?.level)">
+      <div class="flex items-center gap-2 px-3 py-1.5 border-b"
+           :class="getHermesCls(getHermesMsgs('funnel')[0]?.level)">
+        <span class="hermes-wing text-sm">⚡</span>
+        <span class="text-xs font-bold" :class="getHermesTextCls(getHermesMsgs('funnel')[0]?.level)">Hermes · 漏斗洞察</span>
+        <span class="text-xs animate-pulse opacity-50 ml-1" :class="getHermesTextCls(getHermesMsgs('funnel')[0]?.level)">● 自进化</span>
+        <span class="ml-auto text-xs opacity-50" :class="getHermesTextCls(getHermesMsgs('funnel')[0]?.level)"
+              x-text="hermesLearnCount>0?'已学习'+hermesLearnCount+'次 · '+getHermesMsgs('funnel').length+'条':getHermesMsgs('funnel').length+'条'"></span>
+      </div>
+      <div class="divide-y divide-white/60">
+        <template x-for="(msg,i) in getHermesMsgs('funnel')" :key="i">
+          <div class="px-3 py-2.5 flex items-center gap-2 transition-all"
+               :class="msg.action ? 'cursor-pointer hover:bg-white/70 active:scale-[0.99]' : ''"
+               @click="hermesAction(msg)">
+            <span class="text-sm flex-shrink-0" x-text="msg.icon"></span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs leading-relaxed" :class="getHermesTextCls(msg.level)" x-text="msg.text"></p>
+              <p class="text-xs opacity-60 mt-0.5" :class="getHermesTextCls(msg.level)" x-show="msg.sub" x-text="msg.sub"></p>
+            </div>
+            <template x-if="msg.action">
+              <span class="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border whitespace-nowrap"
+                    :class="msg.level==='warn'?'bg-red-50 text-red-600 border-red-200':msg.level==='praise'?'bg-emerald-50 text-emerald-600 border-emerald-200':'bg-violet-50 text-violet-600 border-violet-200'"
+                    x-text="msg.action.label"></span>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div class="funnel-board">
+      <template x-for="s in funnelStages" :key="s.id">
+        <div class="funnel-col bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div class="px-3 py-2 border-b flex items-center justify-between" :class="s.headBg">
+            <span class="text-xs font-semibold" :class="s.headText" x-text="s.label"></span>
+            <span class="text-xs font-bold px-1.5 py-0.5 rounded-full" :class="s.badgeCls" x-text="getFunnelCount(s.id)"></span>
+          </div>
+          <div class="p-2 space-y-2 min-h-48 max-h-[520px] overflow-y-auto">
+            <template x-for="cust in getFunnelCustomers(s.id)" :key="cust.id">
+              <div x-data="{expanded:false}"
+                   class="bg-slate-50 rounded-lg border border-slate-100 hover:border-indigo-200 transition-all">
+                <div class="p-2.5 cursor-pointer" @click="expanded=!expanded">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-semibold text-slate-800 truncate" x-text="cust.name"></span>
+                    <span :class="getLevelColor(cust.level)" class="text-xs px-1 py-0.5 rounded font-medium flex-shrink-0 ml-1" x-text="cust.level"></span>
+                  </div>
+                  <template x-if="currentUser && hasManageView()">
+                    <div class="text-xs text-slate-400 mb-0.5" x-text="getOwnerName(cust.ownerId)"></div>
+                  </template>
+                  <template x-if="cust.stage==='Intent' && cust.probability">
+                    <div class="text-xs text-amber-600 bg-amber-50 rounded px-1.5 py-0.5 mb-1 font-medium">
+                      意向 <span x-text="cust.probability+'%'"></span>
+                    </div>
+                  </template>
+                  <div class="text-xs text-slate-400 mb-1.5" x-text="cust.lastInteract?'触达：'+cust.lastInteract:'从未触达'"></div>
+                  <!-- VPS 完善度进度条 -->
+                  <div class="flex items-center gap-1.5">
+                    <div class="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                      <div class="h-1.5 rounded-full transition-all"
+                           :class="getCompletenessCls(getCompleteness(cust))"
+                           :style="'width:'+getCompleteness(cust)+'%'"></div>
+                    </div>
+                    <span class="text-xs text-slate-400 flex-shrink-0" x-text="getCompletenessStr(cust)"></span>
+                  </div>
+                  <template x-if="getCompleteness(cust) < 40">
+                    <div class="text-xs text-orange-600 mt-0.5">📋 资料不全</div>
+                  </template>
+                </div>
+
+                <div x-show="expanded" x-transition class="border-t border-slate-100 px-2.5 pb-2 pt-2">
+                  <p class="text-xs font-medium text-slate-500 mb-1.5">交互记录</p>
+                  <template x-if="getCustomerInteractions(cust.id).length===0">
+                    <p class="text-xs text-slate-300">暂无记录</p>
+                  </template>
+                  <template x-for="log in getCustomerInteractions(cust.id)" :key="log.id">
+                    <div class="text-xs bg-white rounded border border-slate-100 px-2 py-1 mb-1">
+                      <span class="text-slate-500" x-text="log.date+' '+log.type"></span><br/>
+                      <span class="text-slate-600" x-text="log.content"></span>
+                    </div>
+                  </template>
+                </div>
+
+                <div class="px-2.5 pb-2.5 flex flex-col gap-1">
+                  <template x-if="cust.stage!=='Closed'">
+                    <div>
+                      <template x-if="getCustomerInteractions(cust.id).length>0">
+                        <button @click="openAdvanceModal(cust)"
+                          class="w-full text-xs py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded font-semibold transition-all">
+                          推进 →
+                        </button>
+                      </template>
+                      <template x-if="getCustomerInteractions(cust.id).length===0">
+                        <button @click="openAgentModal(cust)"
+                          class="w-full text-xs py-1 bg-slate-100 text-slate-500 rounded font-medium hover:bg-slate-200 transition-all">
+                          先触达 →
+                        </button>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="cust.stage==='Closed'">
+                    <div class="text-xs text-emerald-600 font-semibold text-center pt-1">✓ 已成交</div>
+                  </template>
+                  <!-- 编辑资料按钮 -->
+                  <button @click="openEditModal(cust)"
+                    class="w-full text-xs py-1 bg-slate-50 hover:bg-slate-100 text-slate-500 rounded transition-all">
+                    编辑资料
+                  </button>
+                </div>
+              </div>
+            </template>
+            <template x-if="getFunnelCustomers(s.id).length===0">
+              <div class="text-center py-8 text-slate-300 text-xs">暂无客户</div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ─── Tab 3: 应收管理 ─── -->
+  <div x-show="activeTab==='receivables'" x-cloak class="fade-in">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h1 class="text-base font-bold text-slate-800">应收账款管理</h1>
+        <p class="text-xs text-slate-400 mt-0.5" x-text="hasManageView()?'管理视角 · 可见范围':'个人账款'"></p>
+      </div>
+      <button @click="openDealModal()"
+        class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-2 rounded-lg font-semibold transition-all flex items-center gap-1">
+        <span>＋</span><span>登记成交</span>
+      </button>
+    </div>
+
+    <!-- Hermes 提醒 -->
+    <div class="mb-3 rounded-xl border overflow-hidden" x-show="getHermesMsgs('receivables').length>0"
+         :class="getHermesCls(getHermesMsgs('receivables')[0]?.level)">
+      <div class="flex items-center gap-2 px-3 py-1.5 border-b"
+           :class="getHermesCls(getHermesMsgs('receivables')[0]?.level)">
+        <span class="hermes-wing text-sm">⚡</span>
+        <span class="text-xs font-bold" :class="getHermesTextCls(getHermesMsgs('receivables')[0]?.level)">Hermes · 账款洞察</span>
+        <span class="text-xs animate-pulse opacity-50 ml-1" :class="getHermesTextCls(getHermesMsgs('receivables')[0]?.level)">● 自进化</span>
+        <span class="ml-auto text-xs opacity-50" :class="getHermesTextCls(getHermesMsgs('receivables')[0]?.level)"
+              x-text="hermesLearnCount>0?'已学习'+hermesLearnCount+'次 · '+getHermesMsgs('receivables').length+'条':getHermesMsgs('receivables').length+'条'"></span>
+      </div>
+      <div class="divide-y divide-white/60">
+        <template x-for="(msg,i) in getHermesMsgs('receivables')" :key="i">
+          <div class="px-3 py-2.5 flex items-center gap-2 transition-all"
+               :class="msg.action ? 'cursor-pointer hover:bg-white/70 active:scale-[0.99]' : ''"
+               @click="hermesAction(msg)">
+            <span class="text-sm flex-shrink-0" x-text="msg.icon"></span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs leading-relaxed" :class="getHermesTextCls(msg.level)" x-text="msg.text"></p>
+              <p class="text-xs opacity-60 mt-0.5" :class="getHermesTextCls(msg.level)" x-show="msg.sub" x-text="msg.sub"></p>
+            </div>
+            <template x-if="msg.action">
+              <span class="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border whitespace-nowrap"
+                    :class="msg.level==='warn'?'bg-red-50 text-red-600 border-red-200':msg.level==='praise'?'bg-emerald-50 text-emerald-600 border-emerald-200':'bg-violet-50 text-violet-600 border-violet-200'"
+                    x-text="msg.action.label"></span>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-3 mb-5">
+      <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-center">
+        <div class="text-xl font-bold text-red-600" x-text="getReceivablesByStatus('red').length"></div>
+        <div class="text-xs text-red-500 font-medium">🔴 严重逾期</div>
+        <div class="text-xs text-red-400 mt-0.5" x-text="'¥'+fmt(sumBalance(getReceivablesByStatus('red')))"></div>
+      </div>
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+        <div class="text-xl font-bold text-amber-600" x-text="getReceivablesByStatus('yellow').length"></div>
+        <div class="text-xs text-amber-500 font-medium">🟡 临期预警</div>
+        <div class="text-xs text-amber-400 mt-0.5" x-text="'¥'+fmt(sumBalance(getReceivablesByStatus('yellow')))"></div>
+      </div>
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
+        <div class="text-xl font-bold text-emerald-600" x-text="getReceivablesByStatus('green').length"></div>
+        <div class="text-xs text-emerald-500 font-medium">🟢 健康</div>
+        <div class="text-xs text-emerald-400 mt-0.5" x-text="'¥'+fmt(sumBalance(getReceivablesByStatus('green')))"></div>
+      </div>
+    </div>
+
+    <div class="space-y-3">
+      <template x-if="getMyReceivables().length===0">
+        <div class="text-center py-16 text-slate-400">
+          <div class="text-4xl mb-2">💰</div>
+          <p class="text-xs">暂无账款记录</p>
+        </div>
+      </template>
+      <template x-for="r in getMyReceivables()" :key="r.id">
+        <div class="bg-white rounded-xl shadow-sm overflow-hidden"
+             :class="{'border-red-stripe':getReceivableStatus(r)==='red','border-yellow-stripe':getReceivableStatus(r)==='yellow','border-green-stripe':getReceivableStatus(r)==='green'}">
+          <div class="px-4 py-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-semibold text-slate-800" x-text="getCustomerName(r.customerId)"></span>
+                  <span x-show="getReceivableStatus(r)==='red'" class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">🔴 严重逾期</span>
+                  <span x-show="getReceivableStatus(r)==='yellow'" class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">🟡 临期预警</span>
+                  <span x-show="getReceivableStatus(r)==='green' && (r.totalAmount-r.paidAmount)<=0" class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold">🟢 已结清</span>
+                  <span x-show="getReceivableStatus(r)==='green' && (r.totalAmount-r.paidAmount)>0" class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-bold">🟢 健康</span>
+                </div>
+                <template x-if="currentUser && hasManageView()">
+                  <div class="text-xs text-slate-400 mt-0.5" x-text="getOwnerName(getCustomerOwner(r.customerId))"></div>
+                </template>
+              </div>
+              <template x-if="(r.totalAmount-r.paidAmount)>0">
+                <button @click="openPayModal(r)"
+                  class="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
+                  :class="getReceivableStatus(r)==='red'?'bg-red-600 hover:bg-red-700 text-white':'bg-indigo-600 hover:bg-indigo-700 text-white'">
+                  收款
+                </button>
+              </template>
+            </div>
+            <div class="mt-3 grid grid-cols-3 gap-2 text-center">
+              <div>
+                <div class="text-xs text-slate-400">成交总额</div>
+                <div class="font-bold text-slate-800 text-xs" x-text="'¥'+fmt(r.totalAmount)"></div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-400">已收金额</div>
+                <div class="font-bold text-emerald-600 text-xs" x-text="'¥'+fmt(r.paidAmount)"></div>
+              </div>
+              <div>
+                <div class="text-xs text-slate-400">待收余额</div>
+                <div class="font-bold text-xs" :class="(r.totalAmount-r.paidAmount)>0?'text-red-600':'text-emerald-600'"
+                     x-text="'¥'+fmt(r.totalAmount-r.paidAmount)"></div>
+              </div>
+            </div>
+            <div class="mt-2.5">
+              <div class="flex justify-between text-xs text-slate-400 mb-1">
+                <span>收款进度</span>
+                <span x-text="Math.round(r.paidAmount/r.totalAmount*100)+'%'"></span>
+              </div>
+              <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div class="h-2 rounded-full transition-all"
+                     :class="getReceivableStatus(r)==='green'?'bg-emerald-400':getReceivableStatus(r)==='red'?'bg-red-400':'bg-amber-400'"
+                     :style="'width:'+Math.round(r.paidAmount/r.totalAmount*100)+'%'"></div>
+              </div>
+            </div>
+            <div class="mt-2 flex items-center justify-between text-xs text-slate-400">
+              <span>截止日：<span class="font-medium" :class="getReceivableStatus(r)==='red'?'text-red-600':'text-slate-600'" x-text="r.dueDate"></span></span>
+              <span x-text="r.note||''"></span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ─── Tab 4: 管理大盘 ─── -->
+  <div x-show="activeTab==='manager'" x-cloak class="fade-in">
+    <template x-if="currentUser && hasManageView()">
+      <div>
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h1 class="text-base font-bold text-slate-800"
+                x-text="isDirector()?'部门大盘':currentUser.name+'的小组'"></h1>
+            <p class="text-xs text-slate-400 mt-0.5"
+               x-text="isDirector()?'总监视角 · 全部门穿透':(getTeamName(currentUser.id)+'组长视角 · '+getSalesUsers().length+'名成员')"></p>
+          </div>
+          <!-- 角色徽章 -->
+          <span class="text-xs px-2.5 py-1 rounded-full font-semibold border"
+                :class="isDirector()?'bg-indigo-50 text-indigo-700 border-indigo-200':'bg-amber-50 text-amber-700 border-amber-200'"
+                x-text="isDirector()?'🏢 部门总监':'👥 小组长'"></span>
+        </div>
+
+        <!-- Hermes 提醒 -->
+        <div class="mb-4 rounded-xl border overflow-hidden" x-show="getHermesMsgs('manager').length>0"
+             :class="getHermesCls(getHermesMsgs('manager')[0]?.level)">
+          <div class="flex items-center gap-2 px-3 py-1.5 border-b"
+               :class="getHermesCls(getHermesMsgs('manager')[0]?.level)">
+            <span class="hermes-wing text-sm">⚡</span>
+            <span class="text-xs font-bold" :class="getHermesTextCls(getHermesMsgs('manager')[0]?.level)">Hermes · 管理洞察</span>
+            <span class="text-xs animate-pulse opacity-50 ml-1" :class="getHermesTextCls(getHermesMsgs('manager')[0]?.level)">● 自进化</span>
+            <span class="ml-auto text-xs opacity-50" :class="getHermesTextCls(getHermesMsgs('manager')[0]?.level)"
+                  x-text="hermesLearnCount>0?'已学习'+hermesLearnCount+'次 · '+getHermesMsgs('manager').length+'条':getHermesMsgs('manager').length+'条'"></span>
+          </div>
+          <div class="divide-y divide-white/60">
+            <template x-for="(msg,i) in getHermesMsgs('manager')" :key="i">
+              <div class="px-3 py-2.5 flex items-center gap-2 transition-all"
+                   :class="msg.action ? 'cursor-pointer hover:bg-white/70 active:scale-[0.99]' : ''"
+                   @click="hermesAction(msg)">
+                <span class="text-sm flex-shrink-0" x-text="msg.icon"></span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs leading-relaxed" :class="getHermesTextCls(msg.level)" x-text="msg.text"></p>
+                  <p class="text-xs opacity-60 mt-0.5" :class="getHermesTextCls(msg.level)" x-show="msg.sub" x-text="msg.sub"></p>
+                </div>
+                <template x-if="msg.action">
+                  <span class="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border whitespace-nowrap"
+                        :class="msg.level==='warn'?'bg-red-50 text-red-600 border-red-200':msg.level==='praise'?'bg-emerald-50 text-emerald-600 border-emerald-200':'bg-violet-50 text-violet-600 border-violet-200'"
+                        x-text="msg.action.label"></span>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ★ 总监专属：小组对比区块 -->
+        <template x-if="isDirector()">
+          <div class="mb-4">
+            <h2 class="text-xs font-semibold text-slate-500 mb-2 flex items-center gap-1.5">
+              <span>🏆</span> 小组对比
+            </h2>
+            <div class="grid grid-cols-2 gap-3">
+              <template x-for="team in getTeams()" :key="team.id">
+                <div class="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-bold text-indigo-700" x-text="team.name"></span>
+                      <span class="text-xs text-slate-400" x-text="'·组长 '+team.lead?.name"></span>
+                    </div>
+                    <span class="text-xs text-slate-400" x-text="team.members.length+'人'"></span>
+                  </div>
+                  <div class="grid grid-cols-4 gap-2 text-center">
+                    <div>
+                      <div class="text-base font-bold text-indigo-600" x-text="team.stats.total"></div>
+                      <div class="text-xs text-slate-400">客户</div>
+                    </div>
+                    <div>
+                      <div class="text-base font-bold text-emerald-600" x-text="team.stats.closed"></div>
+                      <div class="text-xs text-slate-400">成交</div>
+                    </div>
+                    <div>
+                      <div class="text-base font-bold text-slate-700" x-text="'¥'+fmt(team.stats.amt)"></div>
+                      <div class="text-xs text-slate-400">合同额</div>
+                    </div>
+                    <div>
+                      <div class="text-base font-bold" :class="team.stats.red>0?'text-red-600':'text-slate-400'" x-text="team.stats.red"></div>
+                      <div class="text-xs text-slate-400">红账</div>
+                    </div>
+                  </div>
+                  <!-- 成员列表 -->
+                  <div class="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-1">
+                    <template x-for="m in team.members" :key="m.id">
+                      <button @click="penetrate(m.id)"
+                        class="text-xs px-2 py-0.5 rounded-full border transition-all"
+                        :class="m.role==='team_lead'?'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100':'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'"
+                        x-text="m.name+'↗'"></button>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- KPI 卡片（数据范围：当前管理视角内的成员） -->
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
+            <div class="text-xl font-bold text-indigo-600"
+                 x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage!=='unassigned').length,0)"></div>
+            <div class="text-xs text-slate-400 mt-0.5" x-text="isDirector()?'全部门客户':'小组客户'"></div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
+            <div class="text-xl font-bold text-emerald-600"
+                 x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage==='Closed').length,0)"></div>
+            <div class="text-xs text-slate-400 mt-0.5">成交客户</div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
+            <div class="text-xl font-bold text-slate-800"
+                 x-text="'¥'+fmt(getReceivablesByStatusAll('green').concat(getReceivablesByStatusAll('yellow')).concat(getReceivablesByStatusAll('red')).reduce((s,r)=>s+r.totalAmount,0))"></div>
+            <div class="text-xs text-slate-400 mt-0.5">合同总额</div>
+          </div>
+          <div class="bg-white rounded-xl border border-slate-200 p-3 text-center shadow-sm">
+            <div class="text-xl font-bold text-amber-600" x-text="getLeads().length"></div>
+            <div class="text-xs text-slate-400 mt-0.5">待分配名单</div>
+          </div>
+        </div>
+
+        <!-- ★ 名单库 -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+              <span>📥</span> 名单库（待分配）
+            </h2>
+            <div class="flex items-center gap-2">
+              <span class="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full" x-text="getLeads().length+'条'"></span>
+              <!-- 一键平均分配 -->
+              <button @click="assignAllLeads()"
+                x-show="getLeads().length>0"
+                class="text-xs px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold transition-all border border-emerald-200 flex items-center gap-1">
+                <span>⚡</span> 一键均分
+              </button>
+              <!-- 导入按钮 -->
+              <button @click="$refs.importFileInput.click()"
+                class="text-xs px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-all border border-indigo-200 flex items-center gap-1">
+                <span>⬆</span> 导入名单
+              </button>
+              <input type="file" x-ref="importFileInput" accept=".csv,.xlsx,.xls"
+                class="hidden" @change="handleImportFile($event)" />
+            </div>
+          </div>
+          <template x-if="getLeads().length===0">
+            <div class="text-center py-5 text-slate-400 text-xs">
+              <div class="text-2xl mb-1">📭</div>
+              <p>名单库已清空，所有名单已分配</p>
+            </div>
+          </template>
+          <div class="space-y-2">
+            <template x-for="lead in getLeads()" :key="lead.id">
+              <div class="bg-slate-50 rounded-lg border border-slate-100 px-3 py-2.5">
+                <div class="flex items-center justify-between gap-2">
+                  <!-- 左：客户信息 -->
+                  <div class="flex items-center gap-2 flex-1 min-w-0">
+                    <span class="font-semibold text-slate-700 text-xs truncate" x-text="lead.name"></span>
+                    <span :class="getLevelColor(lead.level)" class="text-xs px-1.5 py-0.5 rounded-full font-medium flex-shrink-0" x-text="lead.level+'级'"></span>
+                    <span x-show="lead.source" class="text-xs text-slate-400 flex-shrink-0" x-text="lead.source||''"></span>
+                  </div>
+                  <!-- 右：分配控件 -->
+                  <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <template x-if="assigningLeadId===lead.id">
+                      <div class="flex items-center gap-1.5">
+                        <select x-model="assignTargetUserId"
+                          class="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-indigo-300">
+                          <option value="">选择销售员</option>
+                          <template x-for="u in getSalesUsers()" :key="u.id">
+                            <option :value="u.id" x-text="u.name"></option>
+                          </template>
+                        </select>
+                        <button @click="submitAssignLead(lead.id)"
+                          :disabled="!assignTargetUserId"
+                          class="text-xs px-2 py-1 rounded-lg font-medium transition-all"
+                          :class="assignTargetUserId?'bg-indigo-600 text-white hover:bg-indigo-700':'bg-slate-200 text-slate-400 cursor-not-allowed'">
+                          确定
+                        </button>
+                        <button @click="assigningLeadId=null; assignTargetUserId=''"
+                          class="text-xs px-2 py-1 rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 transition-all">
+                          取消
+                        </button>
+                      </div>
+                    </template>
+                    <template x-if="assigningLeadId!==lead.id">
+                      <button @click="assigningLeadId=lead.id; assignTargetUserId=''"
+                        class="text-xs px-3 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold transition-all border border-amber-200">
+                        分配↗
+                      </button>
+                    </template>
+                  </div>
+                </div>
+                <!-- VPS 完善度 -->
+                <div class="mt-2 flex items-center gap-1.5">
+                  <div class="flex-1 bg-slate-200 rounded-full h-1 overflow-hidden">
+                    <div class="h-1 rounded-full" :class="getCompletenessCls(getCompleteness(lead))"
+                         :style="'width:'+getCompleteness(lead)+'%'"></div>
+                  </div>
+                  <span class="text-xs text-slate-400" x-text="getCompletenessStr(lead)"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 漏斗汇总 -->
+        <div class="bg-white rounded-xl border border-slate-200 p-4 mb-4 shadow-sm">
+          <h2 class="text-xs font-semibold text-slate-600 mb-3">全组漏斗分布</h2>
+          <div class="space-y-2">
+            <template x-for="s in funnelStages" :key="s.id">
+              <div class="flex items-center gap-3">
+                <div class="text-xs text-slate-500 w-14 flex-shrink-0 text-right" x-text="s.label"></div>
+                <div class="flex-1 bg-slate-100 rounded-full h-5 overflow-hidden">
+                  <div class="h-5 rounded-full flex items-center px-2 text-xs font-bold text-white transition-all"
+                       :class="s.barCls" :style="'width:'+Math.max(getManagerFunnelPct(s.id),4)+'%'">
+                    <span x-text="getFunnelCountAll(s.id)"></span>
+                  </div>
+                </div>
+                <div class="text-xs font-bold text-slate-700 w-6 text-right" x-text="getFunnelCountAll(s.id)"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 销售员对比 + 三色异常面板 -->
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <!-- 销售员对比 -->
+          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+            <h2 class="text-xs font-semibold text-slate-600 mb-3">成员对比</h2>
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="text-slate-400 border-b border-slate-100">
+                  <th class="pb-2 text-left font-medium">姓名</th>
+                  <th class="pb-2 text-center font-medium">客户</th>
+                  <th class="pb-2 text-center font-medium">成交</th>
+                  <th class="pb-2 text-center font-medium">意向</th>
+                  <th class="pb-2 text-center font-medium">红账</th>
+                  <th class="pb-2 text-center font-medium">回复率</th>
+                  <th class="pb-2 text-center font-medium">转化率</th>
+                  <th class="pb-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+
+                <!-- ══ 总监视角：部门汇总行 ══ -->
+                <template x-if="isDirector()">
+                  <tr class="border-b-2 border-slate-300 bg-slate-100/80">
+                    <td class="py-2 pl-1">
+                      <div class="font-bold text-slate-800 text-xs">🏢 部门汇总</div>
+                      <div class="text-slate-500 text-xs mt-0.5" x-text="getSalesUsers().length+'名成员 · '+getTeams().length+'个小组'"></div>
+                    </td>
+                    <td class="py-2 text-center font-bold text-slate-800"
+                        x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage!=='unassigned').length,0)"></td>
+                    <td class="py-2 text-center font-bold text-emerald-700"
+                        x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage==='Closed').length,0)"></td>
+                    <td class="py-2 text-center font-bold text-amber-700"
+                        x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage==='Intent').length,0)"></td>
+                    <td class="py-2 text-center font-bold text-red-700"
+                        x-text="getSalesUsers().reduce((s,u)=>s+receivables.filter(r=>{const c=customers.find(x=>x.id===r.customerId);return c&&c.ownerId===u.id&&getReceivableStatus(r)==='red';}).length,0)"></td>
+                    <td class="py-2 text-center text-slate-400 text-xs">—</td>
+                    <td class="py-2 text-center text-slate-400 text-xs">—</td>
+                    <td class="py-2"></td>
+                  </tr>
+                </template>
+
+                <!-- ══ 总监视角：扁平化行，单层 x-for，组行可展开 ══ -->
+                <template x-if="isDirector()">
+                  <template x-for="row in getDirectorFlatRows()" :key="row.id">
+                    <tr @click="row.type==='group' && toggleTeamExpand(row.team.id)"
+                        :class="row.type==='group'
+                          ? 'border-b-2 border-indigo-100 bg-indigo-50/70 cursor-pointer select-none hover:bg-indigo-100/60'
+                          : 'border-b border-slate-50 hover:bg-slate-50 transition-all'">
+
+                      <!-- 姓名列：组行 or 成员行 -->
+                      <td class="py-2" :class="row.type==='member'?'pl-5':''">
+                        <!-- 组汇总 -->
+                        <template x-if="row.type==='group'">
+                          <div>
+                            <div class="font-bold text-indigo-700 text-xs flex items-center gap-1.5">
+                              <span x-text="row.team.name+'汇总'"></span>
+                              <span class="text-indigo-400 font-normal" x-text="row.expanded?'▾':'▸'"></span>
+                            </div>
+                            <div class="text-indigo-400 text-xs mt-0.5"
+                                 x-text="'组长·'+row.team.lead?.name+' · '+row.team.members.length+'人'"></div>
+                          </div>
+                        </template>
+                        <!-- 成员 -->
+                        <template x-if="row.type==='member'">
+                          <div>
+                            <div class="font-semibold text-slate-700 text-xs" x-text="row.user.name"></div>
+                            <div class="text-xs mt-0.5">
+                              <span class="rounded-full px-1.5 py-0.5 font-medium"
+                                    :class="row.user.role==='team_lead'?'bg-amber-100 text-amber-700':isNewbie(row.user)?'bg-sky-100 text-sky-700':'bg-emerald-100 text-emerald-700'"
+                                    x-text="getRoleLabel(row.user)"></span>
+                            </div>
+                          </div>
+                        </template>
+                      </td>
+
+                      <!-- 客户 -->
+                      <td class="py-2 text-center font-bold"
+                          :class="row.type==='group'?'text-indigo-700':'text-slate-700 font-medium'"
+                          x-text="row.type==='group'
+                            ? row.team.stats.total
+                            : customers.filter(c=>c.ownerId===row.user.id&&c.stage!=='unassigned').length">
+                      </td>
+                      <!-- 成交 -->
+                      <td class="py-2 text-center font-bold text-emerald-600"
+                          x-text="row.type==='group'
+                            ? row.team.stats.closed
+                            : customers.filter(c=>c.ownerId===row.user.id&&c.stage==='Closed').length">
+                      </td>
+                      <!-- 意向 -->
+                      <td class="py-2 text-center font-bold text-amber-600"
+                          x-text="row.type==='group'
+                            ? row.team.members.reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage==='Intent').length,0)
+                            : customers.filter(c=>c.ownerId===row.user.id&&c.stage==='Intent').length">
+                      </td>
+                      <!-- 红账 -->
+                      <td class="py-2 text-center font-bold text-red-600"
+                          x-text="row.type==='group'
+                            ? row.team.stats.red
+                            : receivables.filter(r=>{const c=customers.find(x=>x.id===r.customerId);return c&&c.ownerId===row.user.id&&getReceivableStatus(r)==='red';}).length">
+                      </td>
+                      <!-- 回复率 -->
+                      <td class="py-2 text-center">
+                        <template x-if="row.type==='group'">
+                          <span class="text-slate-300 text-xs">—</span>
+                        </template>
+                        <template x-if="row.type==='member'">
+                          <span :class="getStatusBadgeCls(getResponseRate(row.user.id).status)"
+                                class="text-xs px-2 py-0.5 rounded-full font-bold"
+                                x-text="getResponseRate(row.user.id).status==='gray'?'—':getResponseRate(row.user.id).replied+'/'+getResponseRate(row.user.id).reached"></span>
+                        </template>
+                      </td>
+                      <!-- 转化率 -->
+                      <td class="py-2 text-center">
+                        <template x-if="row.type==='group'">
+                          <span class="text-slate-300 text-xs">—</span>
+                        </template>
+                        <template x-if="row.type==='member'">
+                          <span :class="getStatusBadgeCls(getConversionRate(row.user.id).status)"
+                                class="text-xs px-2 py-0.5 rounded-full font-bold"
+                                x-text="getConversionRate(row.user.id).status==='gray'?'—':getConversionRate(row.user.id).won+'/'+getConversionRate(row.user.id).opps"></span>
+                        </template>
+                      </td>
+                      <!-- 操作 -->
+                      <td class="py-2 text-right">
+                        <template x-if="row.type==='member'">
+                          <button @click.stop="penetrate(row.user.id)"
+                            class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded font-semibold transition-all">
+                            穿透↗
+                          </button>
+                        </template>
+                      </td>
+                    </tr>
+                  </template>
+                </template>
+
+                <!-- ══ 小组长视角：本组汇总 + 成员明细 ══ -->
+                <template x-if="isTeamLead()">
+                  <template x-if="true">
+                    <tr class="border-b-2 border-indigo-100 bg-indigo-50/60">
+                      <td class="py-2 pl-1">
+                        <div class="font-bold text-indigo-700 text-xs" x-text="getTeamName(currentUser.id)+'组汇总'"></div>
+                        <div class="text-indigo-400 text-xs mt-0.5" x-text="getSalesUsers().length+'名成员'"></div>
+                      </td>
+                      <td class="py-2 text-center font-bold text-indigo-700"
+                          x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage!=='unassigned').length,0)"></td>
+                      <td class="py-2 text-center font-bold text-emerald-600"
+                          x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage==='Closed').length,0)"></td>
+                      <td class="py-2 text-center font-bold text-amber-600"
+                          x-text="getSalesUsers().reduce((s,u)=>s+customers.filter(c=>c.ownerId===u.id&&c.stage==='Intent').length,0)"></td>
+                      <td class="py-2 text-center font-bold text-red-600"
+                          x-text="getSalesUsers().reduce((s,u)=>s+receivables.filter(r=>{const c=customers.find(x=>x.id===r.customerId);return c&&c.ownerId===u.id&&getReceivableStatus(r)==='red';}).length,0)"></td>
+                      <td class="py-2 text-center text-slate-300 text-xs">—</td>
+                      <td class="py-2 text-center text-slate-300 text-xs">—</td>
+                      <td class="py-2"></td>
+                    </tr>
+                  </template>
+                </template>
+                <template x-if="!isDirector()">
+                  <template x-for="u in getSalesUsers()" :key="u.id">
+                    <tr class="border-b border-slate-50 hover:bg-slate-50 transition-all">
+                      <td class="py-2">
+                        <div class="font-semibold text-slate-700 text-xs" x-text="u.name"></div>
+                        <div class="text-xs mt-0.5">
+                          <span class="rounded-full px-1.5 py-0.5 font-medium"
+                                :class="u.role==='team_lead'?'bg-amber-100 text-amber-700':isNewbie(u)?'bg-sky-100 text-sky-700':'bg-emerald-100 text-emerald-700'"
+                                x-text="getRoleLabel(u)"></span>
+                        </div>
+                      </td>
+                      <td class="py-2 text-center font-medium" x-text="customers.filter(c=>c.ownerId===u.id&&c.stage!=='unassigned').length"></td>
+                      <td class="py-2 text-center font-medium text-emerald-600" x-text="customers.filter(c=>c.ownerId===u.id&&c.stage==='Closed').length"></td>
+                      <td class="py-2 text-center font-medium text-amber-600" x-text="customers.filter(c=>c.ownerId===u.id&&c.stage==='Intent').length"></td>
+                      <td class="py-2 text-center font-bold text-red-600"
+                          x-text="receivables.filter(r=>{const c=customers.find(x=>x.id===r.customerId);return c&&c.ownerId===u.id&&getReceivableStatus(r)==='red';}).length"></td>
+                      <td class="py-2 text-center">
+                        <span :class="getStatusBadgeCls(getResponseRate(u.id).status)"
+                              class="text-xs px-2 py-0.5 rounded-full font-bold"
+                              x-text="getResponseRate(u.id).status==='gray'?'—':getResponseRate(u.id).replied+'/'+getResponseRate(u.id).reached"></span>
+                      </td>
+                      <td class="py-2 text-center">
+                        <span :class="getStatusBadgeCls(getConversionRate(u.id).status)"
+                              class="text-xs px-2 py-0.5 rounded-full font-bold"
+                              x-text="getConversionRate(u.id).status==='gray'?'—':getConversionRate(u.id).won+'/'+getConversionRate(u.id).opps"></span>
+                      </td>
+                      <td class="py-2 text-right">
+                        <button @click="penetrate(u.id)"
+                          class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs px-2 py-1 rounded font-semibold transition-all">
+                          穿透↗
+                        </button>
+                      </td>
+                    </tr>
+                  </template>
+                </template>
+
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 三色异常面板 -->
+          <div class="bg-white rounded-xl border border-slate-200 p-4 shadow-sm overflow-y-auto max-h-[480px]">
+            <h2 class="text-xs font-semibold text-slate-600 mb-3">三色异常面板</h2>
+
+            <!-- 红色逾期 -->
+            <div class="mb-3">
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                <span class="text-xs font-semibold text-red-700">红色逾期</span>
+                <span class="ml-auto text-xs font-bold text-red-600" x-text="getReceivablesByStatusAll('red').length+'笔'"></span>
+              </div>
+              <template x-for="r in getReceivablesByStatusAll('red')" :key="r.id">
+                <div class="bg-red-50 rounded-lg px-2.5 py-1.5 mb-1 text-xs">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium text-red-800" x-text="getCustomerName(r.customerId)"></span>
+                    <span class="text-red-600" x-text="'¥'+fmt(r.totalAmount-r.paidAmount)"></span>
+                  </div>
+                  <div class="text-red-400 mt-0.5" x-text="'归属：'+getOwnerName(getCustomerOwner(r.customerId))+' · 截止：'+r.dueDate"></div>
+                </div>
+              </template>
+              <template x-if="getReceivablesByStatusAll('red').length===0">
+                <div class="text-xs text-slate-300 pl-4">暂无红色异常</div>
+              </template>
+            </div>
+
+            <!-- 黄色临期 -->
+            <div>
+              <div class="flex items-center gap-2 mb-2">
+                <div class="w-2.5 h-2.5 rounded-full bg-amber-400"></div>
+                <span class="text-xs font-semibold text-amber-700">黄色临期</span>
+                <span class="ml-auto text-xs font-bold text-amber-600" x-text="getReceivablesByStatusAll('yellow').length+'笔'"></span>
+              </div>
+              <template x-for="r in getReceivablesByStatusAll('yellow')" :key="r.id">
+                <div class="bg-amber-50 rounded-lg px-2.5 py-1.5 mb-1 text-xs">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium text-amber-800" x-text="getCustomerName(r.customerId)"></span>
+                    <span class="text-amber-600" x-text="'¥'+fmt(r.totalAmount-r.paidAmount)"></span>
+                  </div>
+                  <div class="text-amber-400 mt-0.5" x-text="'归属：'+getOwnerName(getCustomerOwner(r.customerId))+' · 截止：'+r.dueDate"></div>
+                </div>
+              </template>
+              <template x-if="getReceivablesByStatusAll('yellow').length===0">
+                <div class="text-xs text-slate-300 pl-4">暂无黄色预警</div>
+              </template>
+            </div>
+
+            <!-- 触达回复率异常 -->
+            <div class="mt-3 pt-3 border-t border-slate-100">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs">📞</span>
+                <span class="text-xs font-semibold text-slate-700">触达回复率异常</span>
+              </div>
+              <template x-for="u in getSalesUsers()" :key="u.id">
+                <div x-show="['red','yellow'].includes(getResponseRate(u.id).status)"
+                     class="rounded-lg px-2.5 py-1.5 mb-1 text-xs"
+                     :class="getResponseRate(u.id).status==='red'?'bg-red-50':'bg-amber-50'">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium" :class="getResponseRate(u.id).status==='red'?'text-red-800':'text-amber-800'" x-text="u.name"></span>
+                    <span :class="getResponseRate(u.id).status==='red'?'text-red-600':'text-amber-600'" x-text="getResponseRate(u.id).replied+'/'+getResponseRate(u.id).reached"></span>
+                  </div>
+                  <div :class="getResponseRate(u.id).status==='red'?'text-red-400':'text-amber-400'" class="mt-0.5"
+                       x-text="'触达 '+getResponseRate(u.id).reached+' · 回复 '+getResponseRate(u.id).replied"></div>
+                </div>
+              </template>
+              <template x-if="getSalesUsers().filter(u=>['red','yellow'].includes(getResponseRate(u.id).status)).length===0">
+                <div class="text-xs text-slate-300 pl-4">全员回复率达标</div>
+              </template>
+            </div>
+
+            <!-- 转化率异常 -->
+            <div class="mt-3 pt-3 border-t border-slate-100">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs">🎯</span>
+                <span class="text-xs font-semibold text-slate-700">转化率异常</span>
+              </div>
+              <template x-for="u in getSalesUsers()" :key="u.id">
+                <div x-show="['red','yellow'].includes(getConversionRate(u.id).status)"
+                     class="rounded-lg px-2.5 py-1.5 mb-1 text-xs"
+                     :class="getConversionRate(u.id).status==='red'?'bg-red-50':'bg-amber-50'">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium" :class="getConversionRate(u.id).status==='red'?'text-red-800':'text-amber-800'" x-text="u.name"></span>
+                    <span :class="getConversionRate(u.id).status==='red'?'text-red-600':'text-amber-600'" x-text="getConversionRate(u.id).won+'/'+getConversionRate(u.id).opps"></span>
+                  </div>
+                  <div :class="getConversionRate(u.id).status==='red'?'text-red-400':'text-amber-400'" class="mt-0.5"
+                       x-text="'机会 '+getConversionRate(u.id).opps+' · 成交 '+getConversionRate(u.id).won"></div>
+                </div>
+              </template>
+              <template x-if="getSalesUsers().filter(u=>['red','yellow'].includes(getConversionRate(u.id).status)).length===0">
+                <div class="text-xs text-slate-300 pl-4">全员转化率达标</div>
+              </template>
+            </div>
+
+            <!-- ★ 资料完整度异常 -->
+            <div class="mt-3 pt-3 border-t border-slate-100">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="text-xs">📋</span>
+                <span class="text-xs font-semibold text-slate-700">资料完整度异常</span>
+              </div>
+              <template x-for="u in getSalesUsers()" :key="u.id">
+                <div x-show="getCompletenessStats(u.id).red > 0 || getCompletenessStats(u.id).yellow > 0"
+                     class="bg-orange-50 rounded-lg px-2.5 py-1.5 mb-1 text-xs border border-orange-100">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium text-orange-800" x-text="u.name"></span>
+                    <span class="text-orange-600"
+                          x-text="'红:'+getCompletenessStats(u.id).red+' 黄:'+getCompletenessStats(u.id).yellow"></span>
+                  </div>
+                  <div class="text-orange-400 mt-0.5"
+                       x-text="'共'+getCompletenessStats(u.id).total+'客户，待完善'+(getCompletenessStats(u.id).red+getCompletenessStats(u.id).yellow)+'个'"></div>
+                </div>
+              </template>
+              <template x-if="getSalesUsers().every(u=>getCompletenessStats(u.id).red===0 && getCompletenessStats(u.id).yellow===0)">
+                <div class="text-xs text-slate-300 pl-4">全员资料完善度达标</div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-700 flex items-center gap-2">
+          <span>💡</span>
+          <span>点击"穿透↗"切换为该销售员视角代为操作 · 点击右下角"⚙"调整全局规则</span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+</main>
+
+<!-- ═══ 底部状态栏 ═══ -->
+<footer class="fixed bottom-0 left-0 right-0 bg-slate-800 text-slate-300 text-xs px-4 py-2 flex items-center justify-between z-20">
+  <div class="flex items-center gap-2">
+    <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+    <span x-text="storageStatus"></span>
+  </div>
+  <div class="flex items-center gap-3">
+    <span x-text="'客户：'+customers.filter(c=>c.stage!=='unassigned').length+'条'"></span>
+    <span x-text="'名单库：'+getLeads().length+'条'"></span>
+    <span x-text="'账款：'+receivables.length+'条'"></span>
+    <button @click="resetStorage()" class="text-red-400 hover:text-red-300 underline ml-2">重置数据</button>
+  </div>
+</footer>
+
+<!-- ═══ 浮动规则按钮 ═══ -->
+<button @click="rulesOpen=true"
+  class="fixed bottom-14 right-4 z-30 w-11 h-11 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+  title="规则大脑">
+  <span class="text-base">⚙️</span>
+</button>
+
+<!-- ═══ 规则侧边栏遮罩 ═══ -->
+<div x-show="rulesOpen" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/40 z-40"
+     @click="rulesOpen=false">
+</div>
+
+<!-- ═══ 规则侧边栏 ═══ -->
+<div x-show="rulesOpen" x-cloak
+     x-transition:enter="transition ease-out duration-300" x-transition:enter-start="translate-x-full" x-transition:enter-end="translate-x-0"
+     x-transition:leave="transition ease-in duration-200" x-transition:leave-start="translate-x-0" x-transition:leave-end="translate-x-full"
+     class="fixed inset-y-0 right-0 w-72 bg-white shadow-2xl z-50 flex flex-col">
+  <!-- 头部 -->
+  <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-indigo-600">
+    <div class="flex items-center gap-2">
+      <span class="text-white text-base">⚙️</span>
+      <p class="font-semibold text-white">规则大脑</p>
+    </div>
+    <button @click="rulesOpen=false" class="text-indigo-200 hover:text-white text-lg">✕</button>
+  </div>
+
+  <!-- 规则内容 -->
+  <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+
+    <!-- 任务生成规则 -->
+    <div>
+      <h3 class="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1.5">
+        <span class="w-1 h-3 bg-indigo-500 rounded-full inline-block"></span>
+        任务生成规则
+      </h3>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">新人阈值（入职 ≤ N 天）</label>
+          <input type="number" x-model.number="rules.newbieDays" min="1" max="365"
+            class="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+          <p class="text-xs text-slate-400 mt-0.5" x-text="'当前值：'+rules.newbieDays+' 天'"></p>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">新人每日任务数</label>
+          <input type="number" x-model.number="rules.newbieTaskCount" min="1" max="20"
+            class="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">老人每日 S 类任务数</label>
+          <input type="number" x-model.number="rules.veteranTaskCount" min="1" max="10"
+            class="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 触达回复率阈值 -->
+    <div>
+      <h3 class="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1.5">
+        <span class="w-1 h-3 bg-blue-500 rounded-full inline-block"></span>
+        触达回复率阈值
+      </h3>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">🔴 红线（低于此值报红）%</label>
+          <input type="number" x-model.number="rules.responseRateRed" min="0" max="100"
+            class="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">🟡 黄线（低于此值报黄）%</label>
+          <input type="number" x-model.number="rules.responseRateYellow" min="0" max="100"
+            class="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        </div>
+      </div>
+    </div>
+
+    <!-- 应收预警阈值 -->
+    <div>
+      <h3 class="text-xs font-bold text-slate-700 mb-3 flex items-center gap-1.5">
+        <span class="w-1 h-3 bg-amber-500 rounded-full inline-block"></span>
+        应收账款预警阈值
+      </h3>
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">🟡 黄色预警（截止前 N 天）</label>
+        <input type="number" x-model.number="rules.receivableYellowLine" min="1" max="30"
+          class="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        <p class="text-xs text-slate-400 mt-0.5" x-text="'当前值：截止前 '+rules.receivableYellowLine+' 天变黄'"></p>
+      </div>
+    </div>
+
+    <!-- 规则预览 -->
+    <div class="bg-slate-50 rounded-xl p-3 text-xs text-slate-500 space-y-1 border border-slate-100">
+      <p class="font-medium text-slate-600 mb-1.5">当前规则预览</p>
+      <p x-text="'入职 ≤ '+rules.newbieDays+' 天 = 新人，取 '+rules.newbieTaskCount+' 个任务'"></p>
+      <p x-text="'入职 > '+rules.newbieDays+' 天 = 老人，取 '+rules.veteranTaskCount+' 个任务'"></p>
+      <p x-text="'回复率 < '+rules.responseRateRed+'% → 红 / < '+rules.responseRateYellow+'% → 黄'"></p>
+      <p x-text="'截止前 '+rules.receivableYellowLine+' 天内 → 黄 / 已逾期 → 红'"></p>
+    </div>
+  </div>
+
+  <!-- 底部按钮 -->
+  <div class="px-5 py-4 border-t border-slate-100 flex gap-2">
+    <button @click="resetRules()"
+      class="flex-1 border border-slate-200 text-slate-600 text-xs py-2.5 rounded-xl font-medium hover:bg-slate-50 transition-all">
+      恢复默认
+    </button>
+    <button @click="applyRules(); rulesOpen=false"
+      class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all">
+      应用规则
+    </button>
+  </div>
+</div>
+
+<!-- ═══ 弹窗：Agent 触达 ═══ -->
+<div x-show="agentModal.show" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4"
+     @click.self="agentModal.show=false">
+  <div x-show="agentModal.show"
+       x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-4" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+       class="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 bg-indigo-100 rounded-lg flex items-center justify-center">✨</div>
+        <div>
+          <p class="font-semibold text-slate-800">触达 Agent</p>
+          <p class="text-xs text-slate-400" x-text="agentModal.customer?agentModal.customer.name:''"></p>
+        </div>
+      </div>
+      <button @click="agentModal.show=false" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+    </div>
+    <div class="px-5 py-4">
+      <template x-if="agentModal.loading">
+        <div class="flex flex-col items-center py-10 gap-3">
+          <div class="flex gap-1.5">
+            <div class="w-2 h-2 bg-indigo-400 rounded-full pulse-dot"></div>
+            <div class="w-2 h-2 bg-indigo-400 rounded-full pulse-dot" style="animation-delay:.3s"></div>
+            <div class="w-2 h-2 bg-indigo-400 rounded-full pulse-dot" style="animation-delay:.6s"></div>
+          </div>
+          <p class="text-slate-500">Agent 分析客户画像，起草话术…</p>
+        </div>
+      </template>
+      <template x-if="!agentModal.loading && agentModal.script">
+        <div class="fade-in">
+          <div class="flex items-center gap-2 mb-3">
+            <template x-if="agentModal.customer">
+              <div class="flex gap-1.5">
+                <span :class="getLevelColor(agentModal.customer.level)" class="text-xs px-2 py-0.5 rounded-full font-medium" x-text="agentModal.customer.level+'级'"></span>
+                <span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full" x-text="getStageLabel(agentModal.customer.stage)"></span>
+              </div>
+            </template>
+            <span class="text-xs text-slate-400 ml-auto">AI 生成 · 可编辑</span>
+          </div>
+          <template x-if="!agentModal.editMode">
+            <div class="bg-slate-50 border border-slate-200 rounded-xl p-4 leading-relaxed cursor-pointer hover:border-indigo-300 transition-all"
+                 @click="agentModal.editMode=true; agentModal.editedScript=agentModal.script"
+                 x-text="agentModal.script"></div>
+          </template>
+          <template x-if="agentModal.editMode">
+            <textarea x-model="agentModal.editedScript" rows="5"
+              class="w-full bg-white border border-indigo-300 rounded-xl p-4 leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-indigo-200"></textarea>
+          </template>
+          <p x-show="!agentModal.editMode" class="text-xs text-slate-400 mt-1.5 text-center">点击可直接编辑</p>
+          <div class="flex gap-2 mt-4">
+            <button @click="regenerateScript()"
+              class="flex-1 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs py-2.5 rounded-xl font-medium transition-all flex items-center justify-center gap-1">
+              🔄 重新生成
+            </button>
+            <template x-if="agentModal.editMode">
+              <button @click="agentModal.editMode=false"
+                class="flex-1 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs py-2.5 rounded-xl font-medium transition-all">
+                取消编辑
+              </button>
+            </template>
+            <button @click="adoptScript()"
+              class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-1">
+              ✓ 采纳并触达
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+    <template x-if="agentModal.successMsg">
+      <div class="px-5 pb-4">
+        <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-700 text-center">
+          ✅ <span x-text="agentModal.successMsg"></span>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- ═══ 弹窗：漏斗推进 ═══ -->
+<div x-show="advModal.show" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4"
+     @click.self="advModal.show=false">
+  <div x-show="advModal.show"
+       x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-4" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+       class="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div>
+        <p class="font-semibold text-slate-800">推进阶段</p>
+        <template x-if="advModal.customer">
+          <p class="text-xs text-slate-400 mt-0.5">
+            <span x-text="advModal.customer.name"></span>
+            <span class="mx-1">→</span>
+            <span class="font-semibold text-indigo-600" x-text="getStageLabel(getNextStage(advModal.customer.stage))"></span>
+          </p>
+        </template>
+      </div>
+      <button @click="advModal.show=false" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+    </div>
+    <div class="px-5 py-4 space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1.5">本次触达方式 <span class="text-red-500">*</span></label>
+        <div class="flex gap-2 flex-wrap">
+          <template x-for="t in ['电话','微信','拜访','会议','邮件']" :key="t">
+            <button @click="advModal.form.interType=t"
+              :class="advModal.form.interType===t?'bg-indigo-600 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+              class="text-xs px-3 py-1.5 rounded-full font-medium transition-all" x-text="t">
+            </button>
+          </template>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1.5">交互内容记录 <span class="text-red-500">*</span></label>
+        <textarea x-model="advModal.form.content" rows="3" placeholder="描述此次跟进的具体内容、客户反馈…"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200 resize-none"></textarea>
+      </div>
+      <template x-if="advModal.customer && getNextStage(advModal.customer.stage)==='Intent'">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1.5">意向概率 <span class="text-red-500">*</span></label>
+          <div class="flex gap-2">
+            <template x-for="p in [25,50,75]" :key="p">
+              <button @click="advModal.form.probability=p"
+                :class="advModal.form.probability===p?'bg-amber-500 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                class="flex-1 text-xs py-2 rounded-xl font-semibold transition-all" x-text="p+'%'">
+              </button>
+            </template>
+          </div>
+        </div>
+      </template>
+      <template x-if="advModal.customer && getNextStage(advModal.customer.stage)==='Closed'">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1.5">成交金额（元） <span class="text-red-500">*</span></label>
+          <input type="number" x-model.number="advModal.form.amount" placeholder="例如 100000"
+            class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+          <template x-if="advModal.form.amount>0">
+            <p class="text-xs text-slate-400 mt-1">账期截止日（30天后）：<span class="font-medium text-slate-600" x-text="getDueDate30()"></span></p>
+          </template>
+        </div>
+      </template>
+      <template x-if="advModal.error">
+        <p class="text-xs text-red-600" x-text="advModal.error"></p>
+      </template>
+      <div class="flex gap-2">
+        <button @click="advModal.show=false" class="flex-1 border border-slate-200 text-slate-600 text-xs py-2.5 rounded-xl font-medium hover:bg-slate-50 transition-all">
+          取消
+        </button>
+        <button @click="submitAdvance()"
+          class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all">
+          确认推进
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 弹窗：收款 ═══ -->
+<div x-show="payModal.show" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4"
+     @click.self="payModal.show=false">
+  <div x-show="payModal.show"
+       x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-4" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+       class="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div>
+        <p class="font-semibold text-slate-800">登记收款</p>
+        <template x-if="payModal.receivable">
+          <p class="text-xs text-slate-400 mt-0.5" x-text="getCustomerName(payModal.receivable.customerId)"></p>
+        </template>
+      </div>
+      <button @click="payModal.show=false" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+    </div>
+    <template x-if="payModal.receivable">
+      <div class="px-5 py-4 space-y-4">
+        <div class="bg-slate-50 rounded-xl p-3 grid grid-cols-2 gap-3 text-center text-xs">
+          <div>
+            <div class="text-slate-400">应收总额</div>
+            <div class="font-bold text-slate-800 mt-0.5" x-text="'¥'+fmt(payModal.receivable.totalAmount)"></div>
+          </div>
+          <div>
+            <div class="text-slate-400">待收余额</div>
+            <div class="font-bold text-red-600 mt-0.5" x-text="'¥'+fmt(payModal.receivable.totalAmount-payModal.receivable.paidAmount)"></div>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1.5">本次收款金额（元） <span class="text-red-500">*</span></label>
+          <input type="number" x-model.number="payModal.amount"
+            :max="payModal.receivable.totalAmount-payModal.receivable.paidAmount"
+            placeholder="请输入收款金额"
+            class="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+          <template x-if="payModal.amount>0">
+            <div class="mt-2 flex justify-between text-xs">
+              <span class="text-slate-400">收款后余额：</span>
+              <span class="font-bold" :class="(payModal.receivable.totalAmount-payModal.receivable.paidAmount-payModal.amount)<=0?'text-emerald-600':'text-slate-700'"
+                    x-text="'¥'+fmt(Math.max(0,payModal.receivable.totalAmount-payModal.receivable.paidAmount-payModal.amount))"></span>
+            </div>
+          </template>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1.5">备注</label>
+          <input type="text" x-model="payModal.note" placeholder="如：第二期款"
+            class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        </div>
+        <template x-if="payModal.error">
+          <p class="text-xs text-red-600" x-text="payModal.error"></p>
+        </template>
+        <div class="flex gap-2">
+          <button @click="payModal.show=false" class="flex-1 border border-slate-200 text-slate-600 text-xs py-2.5 rounded-xl font-medium hover:bg-slate-50 transition-all">取消</button>
+          <button @click="submitPayment()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all">确认收款</button>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- ═══ 弹窗：登记成交 ═══ -->
+<div x-show="dealModal.show" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4"
+     @click.self="dealModal.show=false">
+  <div x-show="dealModal.show"
+       x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-4" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+       class="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div>
+        <p class="font-semibold text-slate-800">登记成交</p>
+        <p class="text-xs text-slate-400 mt-0.5">为意向客户登记成交，自动生成应收账款</p>
+      </div>
+      <button @click="dealModal.show=false" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+    </div>
+    <div class="px-5 py-4 space-y-4">
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1.5">选择成交客户 <span class="text-red-500">*</span></label>
+        <select x-model="dealModal.customerId"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200 bg-white">
+          <option value="">-- 请选择意向阶段客户 --</option>
+          <template x-for="c in getIntentCustomers()" :key="c.id">
+            <option :value="c.id" x-text="c.name+' ('+c.level+'级)'"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1.5">成交金额（元） <span class="text-red-500">*</span></label>
+        <input type="number" x-model.number="dealModal.amount" placeholder="例如 80000"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+        <template x-if="dealModal.amount>0">
+          <p class="text-xs text-slate-400 mt-1">账期截止日：<span class="font-medium text-slate-600" x-text="getDueDate30()"></span></p>
+        </template>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1.5">合同备注</label>
+        <input type="text" x-model="dealModal.note" placeholder="如：首单合同"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+      </div>
+      <template x-if="dealModal.error">
+        <p class="text-xs text-red-600" x-text="dealModal.error"></p>
+      </template>
+      <div class="flex gap-2">
+        <button @click="dealModal.show=false" class="flex-1 border border-slate-200 text-slate-600 text-xs py-2.5 rounded-xl font-medium hover:bg-slate-50 transition-all">取消</button>
+        <button @click="submitDeal()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all">确认成交</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 弹窗：导入名单 ═══ -->
+<div x-show="importModal.show" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4"
+     @click.self="importModal.show=false">
+  <div x-show="importModal.show"
+       x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-4" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+       class="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
+
+    <!-- 头 -->
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div>
+        <p class="font-semibold text-slate-800">导入名单</p>
+        <p class="text-xs text-slate-400 mt-0.5" x-text="importModal.fileName || '支持 .xlsx / .xls / .csv'"></p>
+      </div>
+      <button @click="importModal.show=false" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+    </div>
+
+    <div class="px-5 py-4">
+
+      <!-- 字段说明 -->
+      <div class="bg-slate-50 rounded-xl p-3 mb-4 text-xs text-slate-500 flex items-start gap-2">
+        <span class="flex-shrink-0">📋</span>
+        <div>
+          表头识别字段（第一行）：
+          <span class="font-medium text-slate-700">客户名称</span>（必填）·
+          <span class="font-medium text-slate-700">级别</span>（S/A/B/C，默认A）·
+          <span class="font-medium text-slate-700">来源</span> ·
+          <span class="font-medium text-slate-700">联系人</span> ·
+          <span class="font-medium text-slate-700">电话</span>
+          <button @click="downloadTemplate()"
+            class="ml-2 text-indigo-600 hover:text-indigo-800 underline font-medium">
+            下载模板
+          </button>
+        </div>
+      </div>
+
+      <!-- 解析结果预览 -->
+      <template x-if="importModal.parsed.length > 0">
+        <div class="fade-in">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-medium text-slate-600">
+              共解析 <span class="text-indigo-600 font-bold" x-text="importModal.parsed.length"></span> 条，预览前 5 条：
+            </span>
+          </div>
+          <div class="border border-slate-200 rounded-xl overflow-hidden mb-4">
+            <table class="w-full text-xs">
+              <thead class="bg-slate-50">
+                <tr class="text-slate-400">
+                  <th class="px-3 py-2 text-left font-medium">客户名称</th>
+                  <th class="px-3 py-2 text-center font-medium">级别</th>
+                  <th class="px-3 py-2 text-left font-medium">来源</th>
+                  <th class="px-3 py-2 text-left font-medium">联系人</th>
+                  <th class="px-3 py-2 text-left font-medium">电话</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(row, i) in importModal.parsed.slice(0,5)" :key="i">
+                  <tr class="border-t border-slate-100 hover:bg-slate-50">
+                    <td class="px-3 py-2 font-medium text-slate-800" x-text="row.name||'—'"></td>
+                    <td class="px-3 py-2 text-center">
+                      <span :class="getLevelColor(row.level)" class="px-1.5 py-0.5 rounded font-medium" x-text="row.level"></span>
+                    </td>
+                    <td class="px-3 py-2 text-slate-500" x-text="row.source||'—'"></td>
+                    <td class="px-3 py-2 text-slate-500" x-text="row.contactName||'—'"></td>
+                    <td class="px-3 py-2 text-slate-500" x-text="row.phone||'—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 错误提示 -->
+          <template x-if="importModal.errors.length > 0">
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-700">
+              <p class="font-medium mb-1">⚠ 以下行将被跳过（客户名称为空）：</p>
+              <span x-text="'第 '+importModal.errors.join('、')+' 行'"></span>
+            </div>
+          </template>
+
+          <div class="flex gap-2">
+            <button @click="importModal.show=false"
+              class="flex-1 border border-slate-200 text-slate-600 text-xs py-2.5 rounded-xl font-medium hover:bg-slate-50 transition-all">
+              取消
+            </button>
+            <button @click="confirmImport()"
+              class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-1">
+              <span>✓</span>
+              <span x-text="'确认导入 '+importModal.parsed.filter(r=>r.name).length+' 条名单'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
+      <!-- 空状态 -->
+      <template x-if="importModal.parsed.length === 0 && importModal.fileName">
+        <div class="text-center py-8 text-slate-400 text-xs">
+          <div class="text-3xl mb-2">⚠️</div>
+          <p>未解析到有效数据，请检查文件格式</p>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 弹窗：编辑客户资料（VPS）═══ -->
+<div x-show="editModal.show" x-cloak
+     x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+     x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+     class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4"
+     @click.self="editModal.show=false">
+  <div x-show="editModal.show"
+       x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 scale-95 translate-y-4" x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+       class="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+      <div>
+        <p class="font-semibold text-slate-800">编辑客户资料</p>
+        <template x-if="editModal.customer">
+          <div class="flex items-center gap-2 mt-0.5">
+            <p class="text-xs text-slate-400" x-text="editModal.customer.name"></p>
+            <span class="text-xs font-bold"
+                  :class="getCompleteness(editModal.customer)<40?'text-red-600':getCompleteness(editModal.customer)<80?'text-amber-600':'text-emerald-600'"
+                  x-text="'完善度 '+getCompletenessStr(editModal.customer)"></span>
+          </div>
+        </template>
+      </div>
+      <button @click="editModal.show=false" class="text-slate-400 hover:text-slate-600 text-lg">✕</button>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <!-- 完善度进度条 -->
+      <template x-if="editModal.customer">
+        <div>
+            <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span>资料完善度</span>
+            <span x-text="getCompletenessStr(editModal.customer)"></span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div class="h-2 rounded-full transition-all"
+                 :class="getCompletenessCls(getCompleteness(editModal.customer))"
+                 :style="'width:'+getCompleteness(editModal.customer)+'%'"></div>
+          </div>
+        </div>
+      </template>
+
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">联系人姓名</label>
+        <input type="text" x-model="editModal.form.contactName" placeholder="如：张总"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">联系电话</label>
+        <input type="text" x-model="editModal.form.phone" placeholder="如：138xxxx0000"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">所属行业</label>
+        <input type="text" x-model="editModal.form.industry" placeholder="如：制造业"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" />
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">企业规模</label>
+        <select x-model="editModal.form.size"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200 bg-white">
+          <option value="">-- 选择规模 --</option>
+          <option value="微型(<20人)">微型(&lt;20人)</option>
+          <option value="小型(20-99人)">小型(20-99人)</option>
+          <option value="中型(100-499人)">中型(100-499人)</option>
+          <option value="大型(500人+)">大型(500人+)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-slate-600 mb-1">客户来源</label>
+        <select x-model="editModal.form.source"
+          class="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200 bg-white">
+          <option value="">-- 选择来源 --</option>
+          <option value="内部推荐">内部推荐</option>
+          <option value="市场活动">市场活动</option>
+          <option value="官网咨询">官网咨询</option>
+          <option value="电话开发">电话开发</option>
+          <option value="老客转介绍">老客转介绍</option>
+        </select>
+      </div>
+
+      <div class="flex gap-2 pt-1">
+        <button @click="editModal.show=false" class="flex-1 border border-slate-200 text-slate-600 text-xs py-2.5 rounded-xl font-medium hover:bg-slate-50 transition-all">取消</button>
+        <button @click="submitEdit()" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-2.5 rounded-xl font-semibold transition-all">保存资料</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 主逻辑 ═══ -->
+<script>
+  /**
+   * @returns {Object} Alpine.js 根数据对象
+   */
+  function appData() {
+    return {
+      // ── 基础状态 ──
+      activeTab: 'tasks',
+      storageStatus: '正在初始化…',
+      /** @type {Object[]} */ users: [],
+      /** @type {Object|null} */ currentUser: null,
+      /** @type {Object[]} */ customers: [],
+      /** @type {Object[]} */ interactions: [],
+      /** @type {Object[]} */ receivables: [],
+
+      get tabs() {
+        const all = [
+          { id:'tasks',       label:'📋 今日任务' },
+          { id:'funnel',      label:'📊 漏斗看板' },
+          { id:'receivables', label:'💰 应收管理' },
+          { id:'manager',     label:'👑 管理大盘' },
+        ];
+        if (!this.currentUser || !this.hasManageView()) {
+          return all.filter(t => t.id !== 'manager');
+        }
+        return all;
+      },
+
+      /** 漏斗阶段配置 */
+      funnelStages: [
+        { id:'Potential', label:'潜在',   headBg:'bg-slate-50',   headText:'text-slate-600',  badgeCls:'bg-slate-200 text-slate-600',   barCls:'bg-slate-400' },
+        { id:'Reaching',  label:'触达中', headBg:'bg-blue-50',    headText:'text-blue-700',   badgeCls:'bg-blue-100 text-blue-700',     barCls:'bg-blue-500' },
+        { id:'Replied',   label:'已回复', headBg:'bg-indigo-50',  headText:'text-indigo-700', badgeCls:'bg-indigo-100 text-indigo-700', barCls:'bg-indigo-500' },
+        { id:'Meeting',   label:'约见',   headBg:'bg-purple-50',  headText:'text-purple-700', badgeCls:'bg-purple-100 text-purple-700', barCls:'bg-purple-500' },
+        { id:'Intent',    label:'意向',   headBg:'bg-amber-50',   headText:'text-amber-700',  badgeCls:'bg-amber-100 text-amber-700',   barCls:'bg-amber-500' },
+        { id:'Closed',    label:'成交',   headBg:'bg-emerald-50', headText:'text-emerald-700',badgeCls:'bg-emerald-100 text-emerald-700',barCls:'bg-emerald-500' },
+      ],
+
+      // ── 规则状态 ──
+      rulesOpen: false,
+      /** @type {Object} 当前生效规则 */
+      rules: {},
+      defaultRules: {
+        newbieDays:          30,
+        newbieTaskCount:     5,
+        veteranTaskCount:    2,
+        responseRateRed:     30,
+        responseRateYellow:  50,
+        receivableYellowLine: 7,
+      },
+
+      // ── 弹窗状态 ──
+      agentModal: { show:false, customer:null, loading:false, script:'', editMode:false, editedScript:'', successMsg:null },
+      advModal:   { show:false, customer:null, form:{ interType:'电话', content:'', probability:50, amount:0 }, error:null },
+      payModal:   { show:false, receivable:null, amount:0, note:'', error:null },
+      dealModal:  { show:false, customerId:'', amount:0, note:'', error:null },
+      editModal:   { show:false, customer:null, form:{} },
+      importModal: { show:false, fileName:'', parsed:[], errors:[] },
+      /** @type {Array<{id:string,customerId:string,note:string,createdAt:string,done:boolean}>} */
+      managerTodos: [],
+      /**
+       * 上级下达的临时代办（只读，来自上级）
+       * @type {Array<{id:string,note:string,from:string,customerId:string|null,createdAt:string,urgent:boolean}>}
+       */
+      superiorTodos: [],
+      /** todoType: 'assign'=分配给下级  'self'=上级自己 */
+      addTodoForm: { todoType:'assign', assigneeId:'', customerId:'', note:'' },
+      /** 今日任务筛选器：null=全部 'new_contact'|'s_followup'|'overdue' */
+      taskFilter: null,
+      /** 总监成员表展开状态 { team_a: true/false, team_b: true/false } */
+      expandedTeams: {},
+      /** Hermes 自进化计数（用户点击行动后递增） */
+      hermesLearnCount: 0,
+
+      // ── 名单分配状态 ──
+      assigningLeadId: null,
+      assignTargetUserId: '',
+
+      // ── 初始化 ──
+      init() {
+        this.initStorage();
+        this.initRules();
+        this.currentUser = this.users.find(u => u.id === 'A') || this.users[0];
+      },
+
+      // ── 持久化 ──
+
+      /** 数据结构版本号，升级时自动清空旧缓存 */
+      DATA_VERSION: 'v2-org',
+
+      initStorage() {
+        const raw        = localStorage.getItem('m9_data');
+        const cachedVer  = localStorage.getItem('m9_data_version');
+        const stale      = !raw || cachedVer !== this.DATA_VERSION;
+
+        if (stale) {
+          // 版本不匹配或首次加载 → 注入最新 Mock 数据
+          localStorage.removeItem('m9_data');
+          const mock = this._mockData();
+          this.users         = mock.users;
+          this.customers     = mock.customers;
+          this.interactions  = mock.interactions;
+          this.receivables   = mock.receivables;
+          this.superiorTodos = this._defaultSuperiorTodos();
+          this.managerTodos  = [];
+          this._save();
+          this.storageStatus = '当前数据已存入 localStorage（Mock 数据已更新至 ' + this.DATA_VERSION + '）';
+        } else {
+          const d = JSON.parse(raw);
+          this.users         = d.users;
+          this.customers     = d.customers;
+          this.interactions  = d.interactions;
+          this.receivables   = d.receivables;
+          this.managerTodos  = d.managerTodos  || [];
+          this.superiorTodos = d.superiorTodos || this._defaultSuperiorTodos();
+          this.storageStatus = '当前数据已存入 localStorage（从缓存恢复）';
+        }
+      },
+
+      _save() {
+        localStorage.setItem('m9_data', JSON.stringify({
+          users: this.users, customers: this.customers,
+          interactions: this.interactions, receivables: this.receivables,
+          managerTodos:  this.managerTodos,
+          superiorTodos: this.superiorTodos,
+        }));
+        localStorage.setItem('m9_data_version', this.DATA_VERSION);
+      },
+
+      resetStorage() {
+        if (confirm('确定重置所有数据？将重新注入 Mock 数据并恢复默认规则。')) {
+          localStorage.removeItem('m9_data');
+          localStorage.removeItem('m9_rules');
+          location.reload();
+        }
+      },
+
+      // ── Patch 3: 规则大脑 ──
+
+      /** 从 localStorage 加载规则，若无则使用默认值 */
+      initRules() {
+        const stored = localStorage.getItem('m9_rules');
+        this.rules = stored ? { ...this.defaultRules, ...JSON.parse(stored) } : { ...this.defaultRules };
+      },
+
+      /** 持久化当前规则 */
+      saveRules() {
+        localStorage.setItem('m9_rules', JSON.stringify(this.rules));
+      },
+
+      /** 应用规则（Alpine 响应式自动刷新 UI） */
+      applyRules() {
+        this.saveRules();
+      },
+
+      /** 恢复默认规则并持久化 */
+      resetRules() {
+        this.rules = { ...this.defaultRules };
+        this.saveRules();
+      },
+
+      /**
+       * 全量重算触发入口（规则变更后调用）
+       * Alpine 响应式机制下，修改 rules 即触发所有依赖此状态的计算属性刷新
+       */
+      recalculateAll() {
+        this.saveRules();
+      },
+
+      // ── Mock 数据 ──
+
+      /**
+       * 生成覆盖全场景的初始数据（含 VPS 字段、名单库、完善度分布）
+       * @returns {{ users:Object[], customers:Object[], interactions:Object[], receivables:Object[] }}
+       */
+      /**
+       * 上级下达的默认代办（原型演示用，只读）
+       * @returns {Array}
+       */
+      _defaultSuperiorTodos() {
+        const t = this.todayStr();
+        return [
+          { id:'ST001', note:'本周五前确认 Q3 销售目标分解方案，提交区域总监审批', from:'区域总监 张总', customerId:null,  createdAt:t, urgent:true  },
+          { id:'ST002', note:'跟进龙腾集团续约进度，下周一汇报结果', from:'区域总监 张总', customerId:'C012', createdAt:t, urgent:true  },
+          { id:'ST003', note:'整理本月全组客户拜访记录，月末归档', from:'运营中台',       customerId:null,  createdAt:t, urgent:false },
+        ];
+      },
+
+      _mockData() {
+        const d = n => { const dt=new Date(); dt.setDate(dt.getDate()+n); return dt.toISOString().split('T')[0]; };
+
+        /**
+         * 组织架构：
+         * Sam(总监) → 杨晶晶(A组长) → Vivi(新人) / 何海文(老人)
+         *          → Lina(B组长)  → Viki(老人)
+         */
+        const users = [
+          { id:'VV',   name:'Vivi',   role:'sales',     teamId:'team_a', managerId:'JJ',   joinDate:d(-20)   },
+          { id:'HHW',  name:'何海文',  role:'sales',     teamId:'team_a', managerId:'JJ',   joinDate:d(-365)  },
+          { id:'JJ',   name:'杨晶晶',  role:'team_lead', teamId:'team_a', managerId:'SAM',  joinDate:d(-730)  },
+          { id:'VIKI', name:'Viki',   role:'sales',     teamId:'team_b', managerId:'LINA', joinDate:d(-300)  },
+          { id:'LINA', name:'Lina',   role:'team_lead', teamId:'team_b', managerId:'SAM',  joinDate:d(-800)  },
+          { id:'SAM',  name:'Sam',    role:'director',  teamId:null,     managerId:null,   joinDate:d(-1000) },
+        ];
+
+        /**
+         * VPS 字段说明：
+         * - C001/C002 (A): 完善度 0%（全null）
+         * - C003/C004/C005 (A): 完善度 40%（contactName+phone）
+         * - C012 (B): 完善度 100%（全填）
+         * - C013 (B): 完善度 80%（4/5）
+         * - C014 (B): 完善度 60%（3/5）
+         * - C018~C021: 名单库（unassigned），完善度 20%（source only）
+         */
+        const customers = [
+          // ── Vivi (VV): 新人，6 Potential + 中间阶段 + 制造黄色回复率异常 ──
+          { id:'C001', name:'新星科技', level:'A', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C002', name:'博远贸易', level:'B', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C003', name:'聚力网络', level:'C', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:'李明', phone:'13800001001', industry:null,   size:null, source:null },
+          { id:'C004', name:'锦程医疗', level:'A', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:'王芳', phone:'13800001002', industry:null,   size:null, source:null },
+          { id:'C005', name:'蓝天建材', level:'B', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:'张伟', phone:'13800001003', industry:null,   size:null, source:null },
+          { id:'C006', name:'聚创传媒', level:'C', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C007', name:'晨光咨询', level:'A', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-1), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C008', name:'鸿飞电子', level:'B', stage:'Replied',   ownerId:'VV',  lastInteract:d(-2), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C009', name:'远航物流', level:'A', stage:'Meeting',   ownerId:'VV',  lastInteract:d(-3), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C010', name:'盛世文化', level:'B', stage:'Intent',    ownerId:'VV',  lastInteract:d(-4), probability:50,   contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C011', name:'智汇软件', level:'C', stage:'Potential', ownerId:'VV',  lastInteract:null,  probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C015', name:'恒大塑料', level:'B', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-1), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C016', name:'东方钢铁', level:'C', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-2), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          { id:'C017', name:'明珠服装', level:'B', stage:'Reaching',  ownerId:'VV',  lastInteract:d(-3), probability:null, contactName:null,  phone:null,          industry:null,   size:null, source:null },
+          // ── 何海文 (HHW): 老人，3 S 级 ──
+          { id:'C012', name:'龙腾集团', level:'S', stage:'Closed',   ownerId:'HHW', lastInteract:d(-3), probability:null, contactName:'陈总', phone:'13900001001', industry:'制造业', size:'大型(500人+)',      source:'老客转介绍' },
+          { id:'C013', name:'鑫隆实业', level:'S', stage:'Intent',   ownerId:'HHW', lastInteract:d(-1), probability:75,   contactName:'刘总', phone:'13900001002', industry:'贸易',   size:'中型(100-499人)', source:null },
+          { id:'C014', name:'华盛电力', level:'S', stage:'Meeting',  ownerId:'HHW', lastInteract:d(-2), probability:null, contactName:'吴总', phone:'13900001003', industry:'能源',   size:null,               source:null },
+          // ── 杨晶晶 (JJ): A组长，自己也做业绩，5 个客户分布各阶段 ──
+          { id:'C030', name:'普惠金融', level:'S', stage:'Intent',   ownerId:'JJ',  lastInteract:d(-1), probability:75,   contactName:'赵总', phone:'13700001001', industry:'金融',   size:'大型(500人+)',      source:'内部推荐' },
+          { id:'C031', name:'云鼎科技', level:'A', stage:'Meeting',  ownerId:'JJ',  lastInteract:d(-2), probability:null, contactName:'孙总', phone:'13700001002', industry:'科技',   size:'中型(100-499人)', source:'市场活动' },
+          { id:'C032', name:'锦绣纺织', level:'B', stage:'Replied',  ownerId:'JJ',  lastInteract:d(-3), probability:null, contactName:'钱总', phone:'13700001003', industry:'纺织',   size:null,               source:null },
+          { id:'C033', name:'泰山物业', level:'A', stage:'Reaching', ownerId:'JJ',  lastInteract:d(-4), probability:null, contactName:null,   phone:null,          industry:'物业',   size:null,               source:null },
+          { id:'C034', name:'启航教育', level:'B', stage:'Potential',ownerId:'JJ',  lastInteract:null,  probability:null, contactName:null,   phone:null,          industry:'教育',   size:null,               source:null },
+          // ── Viki (VIKI): B组老人，3 S 级 ──
+          { id:'C050', name:'瀚海航运', level:'S', stage:'Closed',   ownerId:'VIKI',lastInteract:d(-2), probability:null, contactName:'李董', phone:'13600001001', industry:'航运',   size:'大型(500人+)',      source:'老客转介绍' },
+          { id:'C051', name:'金石传媒', level:'S', stage:'Intent',   ownerId:'VIKI',lastInteract:d(-4), probability:50,   contactName:'陈总', phone:'13600001002', industry:'传媒',   size:'中型(100-499人)', source:'内部推荐' },
+          { id:'C052', name:'宏图地产', level:'S', stage:'Meeting',  ownerId:'VIKI',lastInteract:d(-6), probability:null, contactName:'王总', phone:'13600001003', industry:'地产',   size:null,               source:null },
+          // ── Lina (LINA): B组长，自己也做业绩，5 个客户分布各阶段 ──
+          { id:'C060', name:'恒达钢铁', level:'S', stage:'Closed',   ownerId:'LINA',lastInteract:d(-1), probability:null, contactName:'周董', phone:'13500001001', industry:'钢铁',   size:'大型(500人+)',      source:'老客转介绍' },
+          { id:'C061', name:'晟丰电子', level:'A', stage:'Intent',   ownerId:'LINA',lastInteract:d(-2), probability:50,   contactName:'吴总', phone:'13500001002', industry:'电子',   size:'中型(100-499人)', source:'市场活动' },
+          { id:'C062', name:'华章文化', level:'B', stage:'Meeting',  ownerId:'LINA',lastInteract:d(-3), probability:null, contactName:'郑总', phone:'13500001003', industry:'文化',   size:null,               source:'官网咨询' },
+          { id:'C063', name:'翠微农业', level:'A', stage:'Reaching', ownerId:'LINA',lastInteract:d(-5), probability:null, contactName:null,   phone:null,          industry:'农业',   size:null,               source:null },
+          { id:'C064', name:'博雅传播', level:'B', stage:'Potential',ownerId:'LINA',lastInteract:null,  probability:null, contactName:null,   phone:null,          industry:'传媒',   size:null,               source:null },
+          // ── 名单库（待分配）──
+          { id:'C018', name:'天创软件', level:'A', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'内部推荐' },
+          { id:'C019', name:'恒美科技', level:'B', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'市场活动' },
+          { id:'C020', name:'奥达实业', level:'A', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'官网咨询' },
+          { id:'C021', name:'凌云传媒', level:'C', stage:'unassigned', ownerId:null, lastInteract:null, probability:null, contactName:null, phone:null, industry:null, size:null, source:'电话开发' },
+        ];
+
+        const interactions = [
+          // ── 何海文 (HHW) ──
+          { id:'I001', customerId:'C012', type:'电话',       content:'确认合同细节，签约完成，首付款已汇。',                              date:d(-5), userId:'HHW' },
+          { id:'I002', customerId:'C012', type:'微信',       content:'催收尾款，客户表示月底到账。',                                        date:d(-3), userId:'HHW' },
+          { id:'I003', customerId:'C013', type:'拜访',       content:'产品演示顺利，客户已填写意向书，概率75%。',                            date:d(-1), userId:'HHW' },
+          { id:'I004', customerId:'C014', type:'会议',       content:'高层联席会议，客户要求再对比一家供应商。',                             date:d(-2), userId:'HHW' },
+          // ── Vivi (VV) ──
+          { id:'I005', customerId:'C007', type:'AI话术触达', content:'您好，晨光咨询的负责人，我是M9顾问。贵司目前在客户管理方面有哪些痛点？', date:d(-1), userId:'VV' },
+          { id:'I006', customerId:'C008', type:'AI话术触达', content:'您好，鸿飞电子团队，帮助B级企业提升客户转化效率，方便约个电话吗？',     date:d(-3), userId:'VV' },
+          { id:'I007', customerId:'C008', type:'微信',       content:'客户回复：下周二下午有空，发会议链接过来吧。',                         date:d(-2), userId:'VV' },
+          { id:'I008', customerId:'C009', type:'AI话术触达', content:'您好，远航物流负责人，已有3个物流行业标杆客户，转化率提升均25%+。',     date:d(-5), userId:'VV' },
+          { id:'I009', customerId:'C009', type:'微信',       content:'客户回复：感兴趣，约下周三上午10点在其公司演示。',                     date:d(-4), userId:'VV' },
+          { id:'I010', customerId:'C009', type:'拜访',       content:'上门演示，产品反馈正面，需回去和合伙人商量后决定。',                   date:d(-3), userId:'VV' },
+          { id:'I011', customerId:'C010', type:'AI话术触达', content:'您好，盛世文化团队，为B级企业定制六阶段漏斗方案，能显著缩短销售周期。', date:d(-7), userId:'VV' },
+          { id:'I012', customerId:'C010', type:'微信',       content:'客户回复：最近在找这类工具，可以安排详细演示。',                        date:d(-6), userId:'VV' },
+          { id:'I013', customerId:'C010', type:'会议',       content:'线上会议30分钟，功能满意，提出定价问题，已发报价单。',                 date:d(-5), userId:'VV' },
+          { id:'I014', customerId:'C010', type:'拜访',       content:'上门签意向书，客户确认概率50%，待内部审批后签约。',                    date:d(-4), userId:'VV' },
+          { id:'I015', customerId:'C015', type:'AI话术触达', content:'初次触达，等待客户回复。',                                            date:d(-1), userId:'VV' },
+          { id:'I016', customerId:'C016', type:'AI话术触达', content:'初次触达，等待客户回复。',                                            date:d(-2), userId:'VV' },
+          { id:'I017', customerId:'C017', type:'AI话术触达', content:'初次触达，等待客户回复。',                                            date:d(-3), userId:'VV' },
+          // ── 杨晶晶 (JJ) ──
+          { id:'I020', customerId:'C030', type:'拜访',       content:'高层拜访，确认续费意向，报价75折，概率75%。',                          date:d(-1), userId:'JJ' },
+          { id:'I021', customerId:'C030', type:'微信',       content:'发送正式报价单，客户回复需开会讨论。',                                 date:d(-2), userId:'JJ' },
+          { id:'I022', customerId:'C031', type:'会议',       content:'上门演示，需求对焦完成，进入高层汇报阶段。',                           date:d(-2), userId:'JJ' },
+          { id:'I023', customerId:'C031', type:'微信',       content:'发送演示材料，等待高层反馈。',                                        date:d(-3), userId:'JJ' },
+          { id:'I024', customerId:'C032', type:'微信',       content:'客户回复：产品符合需求，安排下周上门演示。',                           date:d(-3), userId:'JJ' },
+          { id:'I025', customerId:'C033', type:'AI话术触达', content:'初次触达泰山物业，介绍M9客户管理方案。',                               date:d(-4), userId:'JJ' },
+          // ── Viki (VIKI) ──
+          { id:'I030', customerId:'C050', type:'电话',       content:'续约合同签署完成，全款已到账。',                                      date:d(-2), userId:'VIKI' },
+          { id:'I031', customerId:'C051', type:'拜访',       content:'二次拜访，确认签约条件，概率50%，等待内部审批。',                     date:d(-4), userId:'VIKI' },
+          { id:'I032', customerId:'C051', type:'微信',       content:'跟进审批进度，客户表示下周有结果。',                                  date:d(-5), userId:'VIKI' },
+          { id:'I033', customerId:'C052', type:'会议',       content:'联席会议，明确需求范围，进入演示阶段。',                               date:d(-6), userId:'VIKI' },
+          // ── Lina (LINA) ──
+          { id:'I040', customerId:'C060', type:'电话',       content:'签约完成，全款已收，归档。',                                          date:d(-1), userId:'LINA' },
+          { id:'I041', customerId:'C061', type:'拜访',       content:'二期方案演示，客户倾向于签约，概率50%，等确认。',                     date:d(-2), userId:'LINA' },
+          { id:'I042', customerId:'C062', type:'会议',       content:'高层会议，产品演示通过，进入报价阶段。',                               date:d(-3), userId:'LINA' },
+          { id:'I043', customerId:'C063', type:'AI话术触达', content:'初次联系翠微农业，等待回复。',                                        date:d(-5), userId:'LINA' },
+        ];
+
+        const receivables = [
+          { id:'R001', customerId:'C012', totalAmount:100000, paidAmount:70000,  dueDate:d(-2), probability:100, note:'尾款3万逾期，客户承诺月底结清' },   // HHW 红
+          { id:'R002', customerId:'C050', totalAmount:200000, paidAmount:200000, dueDate:d(15), probability:100, note:'已全款收回' },                      // VIKI 绿
+          { id:'R003', customerId:'C060', totalAmount:150000, paidAmount:150000, dueDate:d(20), probability:100, note:'已全款收回' },                      // LINA 绿
+          { id:'R004', customerId:'C030', totalAmount:80000,  paidAmount:50000,  dueDate:d(5),  probability:75,  note:'尾款3万，即将到期' },               // JJ 黄
+          { id:'R005', customerId:'C051', totalAmount:120000, paidAmount:60000,  dueDate:d(4),  probability:50,  note:'尾款6万，即将到期' },               // VIKI 黄
+        ];
+
+        return { users, customers, interactions, receivables };
+      },
+
+      // ── BR-1: 今日任务（引用 rules）──
+
+      /**
+       * 根据当前用户和规则生成今日任务清单
+       * @returns {Object[]}
+       */
+      getTodayTasks() {
+        // 总监无自己的销售任务；小组长和销售都有个人任务
+        if (!this.currentUser || this.currentUser.role==='director') return [];
+        const uid   = this.currentUser.id;
+        const mine  = this.customers.filter(c => c.ownerId===uid && c.stage!=='unassigned');
+        const days  = this.getDaysSinceJoin(this.currentUser);
+        const tasks = [];
+
+        // ── S 类客户（所有人均可见）──
+        mine.filter(c=>c.level==='S')
+          .slice(0, this.rules.veteranTaskCount)
+          .forEach(c => {
+            const overdueR = this.receivables.find(r =>
+              r.customerId===c.id && this.getReceivableStatus(r)==='red'
+            );
+            tasks.push({ ...c, taskType: overdueR ? 'overdue' : 's_followup', receivable: overdueR||null });
+          });
+
+        // ── 潜在客户触达（所有人均可见）──
+        // 新人取 newbieTaskCount 个，老人取少量（2个）保持视野
+        const potLimit = days < this.rules.newbieDays ? this.rules.newbieTaskCount : 2;
+        mine.filter(c=>c.stage==='Potential' && !tasks.find(t=>t.id===c.id))
+          .slice(0, potLimit)
+          .forEach(c => tasks.push({ ...c, taskType:'new_contact', receivable:null }));
+
+        // ── 逾期账款（自动插入，去重）──
+        this.receivables.forEach(r => {
+          const cust = this.customers.find(c=>c.id===r.customerId && c.ownerId===uid);
+          if (!cust || this.getReceivableStatus(r)!=='red') return;
+          if (tasks.find(t=>t.id===cust.id)) return;
+          tasks.push({ ...cust, taskType:'overdue', receivable:r });
+        });
+
+        return tasks;
+      },
+
+      /** 当前筛选后的任务列表（供模板使用） */
+      getFilteredTasks() {
+        const all = this.getTodayTasks();
+        if (!this.taskFilter) return all;
+        return all.filter(t => t.taskType === this.taskFilter);
+      },
+
+      /** 按类型统计任务数 */
+      getTaskCount(type) {
+        return this.getTodayTasks().filter(t => t.taskType === type).length;
+      },
+
+      // ── BR-2: 三色状态（引用 rules）──
+
+      /**
+       * 计算账款三色状态
+       * @param {Object} r - Receivable
+       * @returns {'red'|'yellow'|'green'}
+       */
+      getReceivableStatus(r) {
+        const bal = r.totalAmount - r.paidAmount;
+        if (bal <= 0) return 'green';
+        const today   = new Date(); today.setHours(0,0,0,0);
+        const due     = new Date(r.dueDate);
+        const warning = new Date(due);
+        warning.setDate(warning.getDate() - this.rules.receivableYellowLine);
+        if (today >= due)     return 'red';
+        if (today >= warning) return 'yellow';
+        return 'green';
+      },
+
+      // ── Task 3: 漏斗方法 ──
+
+      getFunnelCustomers(stage) {
+        const all = this.customers.filter(c=>c.stage===stage && !c.pendingAccept);
+        if (!this.currentUser) return all;
+        const role = this.currentUser.role;
+        if (role === 'director' || role === 'manager') return all;
+        if (role === 'team_lead') {
+          const ids = [this.currentUser.id, ...this.users.filter(u=>u.managerId===this.currentUser.id).map(u=>u.id)];
+          return all.filter(c=>ids.includes(c.ownerId));
+        }
+        return all.filter(c=>c.ownerId===this.currentUser.id);
+      },
+      getFunnelCount(stage)    { return this.getFunnelCustomers(stage).length; },
+      /** 管理视角内的漏斗阶段客户数（作用域：getSalesUsers 成员） */
+      getFunnelCountAll(stage) {
+        const ids = this.getSalesUsers().map(u=>u.id);
+        return this.customers.filter(c=>c.stage===stage && ids.includes(c.ownerId)).length;
+      },
+      getManagerFunnelPct(stage) {
+        const max = Math.max(...this.funnelStages.map(s=>this.getFunnelCountAll(s.id)), 1);
+        return Math.round(this.getFunnelCountAll(stage)/max*100);
+      },
+      getNextStage(stage) {
+        const order = ['Potential','Reaching','Replied','Meeting','Intent','Closed'];
+        const i = order.indexOf(stage);
+        return i>=0 && i<order.length-1 ? order[i+1] : null;
+      },
+      openAdvanceModal(customer) {
+        this.advModal = { show:true, customer, form:{ interType:'电话', content:'', probability:50, amount:0 }, error:null };
+      },
+      submitAdvance() {
+        const { customer, form } = this.advModal;
+        if (!form.content.trim()) { this.advModal.error='请填写交互内容记录'; return; }
+        const next = this.getNextStage(customer.stage);
+        if (!next) return;
+        if (next==='Intent' && !form.probability) { this.advModal.error='请选择意向概率'; return; }
+        if (next==='Closed' && !(form.amount>0))  { this.advModal.error='请填写成交金额'; return; }
+        this.interactions.push({ id:'I'+Date.now(), customerId:customer.id, type:form.interType, content:form.content, date:this.todayStr(), userId:this.currentUser.id });
+        const idx = this.customers.findIndex(c=>c.id===customer.id);
+        if (idx!==-1) {
+          this.customers[idx].stage = next;
+          this.customers[idx].lastInteract = this.todayStr();
+          if (next==='Intent') this.customers[idx].probability = form.probability;
+          if (next==='Closed') {
+            this.receivables.push({ id:'R'+Date.now(), customerId:customer.id, totalAmount:form.amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:'成交自动生成' });
+          }
+        }
+        this._save();
+        this.advModal.show = false;
+      },
+
+      // ── Task 4: 应收方法 ──
+
+      getMyReceivables() {
+        if (!this.currentUser) return [];
+        if (this.hasManageView()) return this.receivables;
+        return this.receivables.filter(r => {
+          const c = this.customers.find(x=>x.id===r.customerId);
+          return c && c.ownerId===this.currentUser.id;
+        });
+      },
+      getReceivablesByStatus(status)    { return this.getMyReceivables().filter(r=>this.getReceivableStatus(r)===status); },
+      getReceivablesByStatusAll(status) {
+        const byStatus = this.receivables.filter(r=>this.getReceivableStatus(r)===status);
+        if (!this.currentUser) return byStatus;
+        const role = this.currentUser.role;
+        if (role === 'director' || role === 'manager') return byStatus;
+        // team_lead / sales: 只看可见成员的账款
+        const visibleIds = this.getSalesUsers().map(u=>u.id);
+        return byStatus.filter(r=>visibleIds.includes(this.getCustomerOwner(r.customerId)));
+      },
+      sumBalance(list) { return list.reduce((s,r)=>s+(r.totalAmount-r.paidAmount),0); },
+
+      getMyOverallReceivableStatus() {
+        const list = this.getMyReceivables();
+        if (list.length===0) return 'gray';
+        if (list.some(r=>this.getReceivableStatus(r)==='red'))    return 'red';
+        if (list.some(r=>this.getReceivableStatus(r)==='yellow')) return 'yellow';
+        return 'green';
+      },
+
+      openPayModal(receivable) { this.payModal = { show:true, receivable, amount:0, note:'', error:null }; },
+      submitPayment() {
+        const { receivable, amount, note } = this.payModal;
+        const balance = receivable.totalAmount - receivable.paidAmount;
+        if (!(amount>0))    { this.payModal.error='请输入收款金额'; return; }
+        if (amount>balance) { this.payModal.error=`金额不能超过余额 ¥${this.fmt(balance)}`; return; }
+        const idx = this.receivables.findIndex(r=>r.id===receivable.id);
+        if (idx!==-1) { this.receivables[idx].paidAmount += amount; if (note) this.receivables[idx].note=note; }
+        this.interactions.push({ id:'I'+Date.now(), customerId:receivable.customerId, type:'收款', content:`收款 ¥${this.fmt(amount)}${note?'（'+note+'）':''}`, date:this.todayStr(), userId:this.currentUser.id });
+        this._save(); this.payModal.show=false;
+      },
+      openDealModal() { this.dealModal = { show:true, customerId:'', amount:0, note:'', error:null }; },
+      getIntentCustomers() {
+        if (!this.currentUser) return [];
+        const mine = this.hasManageView() ? this.customers : this.customers.filter(c=>c.ownerId===this.currentUser.id);
+        return mine.filter(c=>c.stage==='Intent');
+      },
+      submitDeal() {
+        const { customerId, amount, note } = this.dealModal;
+        if (!customerId) { this.dealModal.error='请选择客户'; return; }
+        if (!(amount>0)) { this.dealModal.error='请输入成交金额'; return; }
+        const idx = this.customers.findIndex(c=>c.id===customerId);
+        if (idx!==-1) { this.customers[idx].stage='Closed'; this.customers[idx].lastInteract=this.todayStr(); }
+        this.receivables.push({ id:'R'+Date.now(), customerId, totalAmount:amount, paidAmount:0, dueDate:this.getDueDate30(), probability:100, note:note||'手动登记成交' });
+        this.interactions.push({ id:'I'+Date.now(), customerId, type:'成交', content:`登记成交 ¥${this.fmt(amount)}`, date:this.todayStr(), userId:this.currentUser.id });
+        this._save(); this.dealModal.show=false;
+      },
+
+      // ── Task 5: 主管方法 ──
+
+      // ── 组织层级辅助 ──────────────────────────
+
+      /** 是否为小组长 */
+      isTeamLead()  { return this.currentUser?.role === 'team_lead'; },
+      /** 是否为部门总监 */
+      isDirector()  { return this.currentUser?.role === 'director'; },
+      /** 是否有管理视角（小组长或总监） */
+      hasManageView(){ return ['team_lead','director','manager'].includes(this.currentUser?.role); },
+
+      /**
+       * 当前用户可管理/查看的成员列表（用于管理大盘对比表）
+       * - 总监: 所有非总监用户
+       * - 小组长: 自己 + 直属下级
+       * - 销售: 空
+       * @returns {Object[]}
+       */
+      getSalesUsers() {
+        if (!this.currentUser) return [];
+        if (this.currentUser.role === 'director')
+          return this.users.filter(u => u.role !== 'director');
+        if (this.currentUser.role === 'team_lead' || this.currentUser.role === 'manager')
+          return this.users.filter(u => u.id === this.currentUser.id || u.managerId === this.currentUser.id);
+        return [];
+      },
+
+      /** 当前用户的直属下级 */
+      getDirectReports() {
+        if (!this.currentUser) return [];
+        return this.users.filter(u => u.managerId === this.currentUser.id);
+      },
+
+      /**
+       * 获取所有小组信息（仅总监视角使用）
+       * @returns {Array<{id,name,lead,members,stats}>}
+       */
+      getTeams() {
+        const teamIds = [...new Set(this.users.filter(u=>u.teamId).map(u=>u.teamId))];
+        return teamIds.map(tid => {
+          const members = this.users.filter(u=>u.teamId===tid);
+          const lead    = members.find(u=>u.role==='team_lead');
+          const mIds    = members.map(u=>u.id);
+          const custs   = this.customers.filter(c=>mIds.includes(c.ownerId) && c.stage!=='unassigned');
+          const closed  = custs.filter(c=>c.stage==='Closed').length;
+          const recv    = this.receivables.filter(r=>mIds.includes(this.getCustomerOwner(r.customerId)));
+          const amt     = recv.reduce((s,r)=>s+r.totalAmount,0);
+          const red     = recv.filter(r=>this.getReceivableStatus(r)==='red').length;
+          return { id:tid, name:tid==='team_a'?'A组':'B组', lead, members,
+                   stats:{ total:custs.length, closed, amt, red } };
+        });
+      },
+
+      /**
+       * Hermes 消息行点击处理：跳转 Tab + 可选重置任务筛选
+       * @param {Object} msg - Hermes 消息对象
+       */
+      hermesAction(msg) {
+        if (!msg.action) return;
+        this.activeTab = msg.action.tab;
+        if ('resetFilter' in msg.action) this.taskFilter = msg.action.resetFilter;
+        this.hermesLearnCount++;
+      },
+
+      /** 切换总监视角小组展开/收起 */
+      toggleTeamExpand(teamId) {
+        this.expandedTeams[teamId] = !this.expandedTeams[teamId];
+      },
+
+      /**
+       * 总监视角成员对比表的扁平化行数组
+       * 每组先输出一条 group 行，若已展开再依次输出 member 行
+       * @returns {Object[]}
+       */
+      getDirectorFlatRows() {
+        const rows = [];
+        for (const team of this.getTeams()) {
+          const expanded = !!this.expandedTeams[team.id];
+          rows.push({ type:'group', id:'grp_'+team.id, team, expanded });
+          if (expanded) {
+            for (const u of team.members) {
+              rows.push({ type:'member', id:'mbr_'+u.id, user:u });
+            }
+          }
+        }
+        return rows;
+      },
+
+      /** 用户所属小组名称 */
+      getTeamName(userId) {
+        const u = this.users.find(x=>x.id===userId);
+        if (!u || !u.teamId) return '';
+        return u.teamId === 'team_a' ? 'A组' : 'B组';
+      },
+
+      /** 角色中文标签 */
+      getRoleLabel(user) {
+        if (!user) return '';
+        if (user.role === 'director')  return '总监';
+        if (user.role === 'team_lead') return '组长';
+        return this.isNewbie(user) ? '新人' : '老人';
+      },
+
+      penetrate(userId) { this.switchUser(userId); this.activeTab='tasks'; },
+
+      // ── 主管今日待办 ──────────────────────────
+
+      /**
+       * 计算指定销售员的今日任务完成进度
+       * @param {string} userId
+       * @returns {{ total:number, done:number, pending:number, pendingCustomers:Object[] }}
+       */
+      getOutreachProgress(userId) {
+        const user  = this.users.find(u=>u.id===userId);
+        if (!user) return { total:0, done:0, pending:0, pendingCustomers:[] };
+        const tasks = this._getTasksForUser(user);
+        const done  = tasks.filter(t => this.isCompletedToday(t.id)).length;
+        const pendingCustomers = tasks.filter(t => !this.isCompletedToday(t.id));
+        return { total:tasks.length, done, pending:tasks.length-done, pendingCustomers };
+      },
+
+      /**
+       * 为任意用户计算今日任务清单（BR-1 逻辑复用）
+       * @param {Object} user
+       * @returns {Object[]}
+       */
+      _getTasksForUser(user) {
+        const uid   = user.id;
+        const mine  = this.customers.filter(c=>c.ownerId===uid && c.stage!=='unassigned');
+        const days  = this.getDaysSinceJoin(user);
+        const tasks = [];
+        if (days < this.rules.newbieDays) {
+          mine.filter(c=>c.stage==='Potential').slice(0, this.rules.newbieTaskCount)
+            .forEach(c => tasks.push({...c, taskType:'new_contact', receivable:null}));
+        } else {
+          mine.filter(c=>c.level==='S').slice(0, this.rules.veteranTaskCount)
+            .forEach(c => {
+              const overdueR = this.receivables.find(r=>r.customerId===c.id && this.getReceivableStatus(r)==='red');
+              tasks.push({...c, taskType:overdueR?'overdue':'s_followup', receivable:overdueR||null});
+            });
+        }
+        this.receivables.forEach(r => {
+          const cust = this.customers.find(c=>c.id===r.customerId && c.ownerId===uid);
+          if (!cust || this.getReceivableStatus(r)!=='red') return;
+          if (tasks.find(t=>t.id===cust.id)) return;
+          tasks.push({...cust, taskType:'overdue', receivable:r});
+        });
+        return tasks;
+      },
+
+      /**
+       * 主管一键推送催促提醒（记录交互，销售员侧可见）
+       * @param {string} customerId
+       * @param {string} salesUserId
+       * @param {string} reason
+       */
+      pushReminder(customerId, salesUserId, reason) {
+        this.interactions.push({
+          id:'I'+Date.now(), customerId,
+          type:'主管督催',
+          content: reason || '主管提醒：请尽快跟进此客户',
+          date:this.todayStr(), userId:this.currentUser.id,
+        });
+        this._save();
+      },
+
+      /**
+       * 新增主管代办
+       * todoType 'assign' 需要 assigneeId；'self' 为主管自己的待办
+       */
+      addManagerTodo() {
+        const { todoType, assigneeId, customerId, note } = this.addTodoForm;
+        if (!note.trim()) return;
+        if (todoType === 'assign' && !assigneeId) return;
+        this.managerTodos.unshift({
+          id:'T'+Date.now(),
+          todoType,
+          assigneeId: todoType==='assign' ? assigneeId : null,
+          customerId: customerId || null,
+          note: note.trim(),
+          createdAt: this.todayStr(),
+          done: false,
+        });
+        this.addTodoForm = { todoType, assigneeId, customerId:'', note:'' };
+        this._save();
+      },
+
+      /** @param {string} id */
+      toggleManagerTodo(id) {
+        const t = this.managerTodos.find(t=>t.id===id);
+        if (t) { t.done=!t.done; this._save(); }
+      },
+
+      /** @param {string} id */
+      deleteManagerTodo(id) {
+        this.managerTodos = this.managerTodos.filter(t=>t.id!==id);
+        this._save();
+      },
+
+      /** 主管今日待处理总数（逾期+触达未完成+未完代办） */
+      getManagerPendingCount() {
+        const overdue  = this.getReceivablesByStatusAll('red').length;
+        const outreach = this.getSalesUsers().reduce((s,u)=>s+this.getOutreachProgress(u.id).pending, 0);
+        const todos    = this.managerTodos.filter(t=>!t.done).length;
+        return overdue + outreach + todos;
+      },
+
+      // ── Patch 1: 名单库 ──
+
+      /** @returns {Object[]} 所有待分配名单（stage=unassigned） */
+      getLeads() { return this.customers.filter(c=>c.stage==='unassigned'); },
+
+      /**
+       * 读取 Excel / CSV 文件并解析为预览数据
+       * @param {Event} event - input[file] change 事件
+       */
+      handleImportFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        event.target.value = '';  // 允许重复选同一文件
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const data = new Uint8Array(e.target.result);
+          let rawRows = [];
+
+          try {
+            const wb = XLSX.read(data, { type:'array' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            rawRows = XLSX.utils.sheet_to_json(ws, { defval:'' });
+          } catch(err) {
+            this.importModal = { show:true, fileName:file.name, parsed:[], errors:[] };
+            return;
+          }
+
+          const VALID_LEVELS = ['S','A','B','C'];
+          const errors = [];
+          const parsed = rawRows.map((r, i) => {
+            const name = String(r['客户名称'] || r['名称'] || r['name'] || '').trim();
+            if (!name) { errors.push(i+2); return null; }
+            const rawLevel = String(r['级别'] || r['level'] || '').trim().toUpperCase();
+            return {
+              name,
+              level:       VALID_LEVELS.includes(rawLevel) ? rawLevel : 'A',
+              source:      String(r['来源']  || r['source']      || '').trim(),
+              contactName: String(r['联系人'] || r['contactName'] || '').trim(),
+              phone:       String(r['电话']  || r['phone']       || '').trim(),
+            };
+          }).filter(Boolean);
+
+          this.importModal = { show:true, fileName:file.name, parsed, errors };
+        };
+        reader.readAsArrayBuffer(file);
+      },
+
+      /** 确认导入：将解析结果写入 customers（stage=unassigned） */
+      confirmImport() {
+        const valid = this.importModal.parsed.filter(r => r.name);
+        valid.forEach(r => {
+          this.customers.push({
+            id:          'C' + Date.now() + Math.random().toString(36).slice(2,5),
+            name:        r.name,
+            level:       r.level,
+            stage:       'unassigned',
+            ownerId:     null,
+            lastInteract: null,
+            probability: null,
+            contactName: r.contactName || null,
+            phone:       r.phone       || null,
+            industry:    null,
+            size:        null,
+            source:      r.source      || null,
+          });
+        });
+        this._save();
+        this.importModal.show = false;
+      },
+
+      /**
+       * 下载 CSV 模板（含表头示例行）
+       */
+      downloadTemplate() {
+        const csv = '客户名称,级别,来源,联系人,电话\n示例公司,A,市场活动,张总,13800000001\n';
+        const blob = new Blob(['\uFEFF'+csv], { type:'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url; a.download = 'M9名单导入模板.csv';
+        a.click(); URL.revokeObjectURL(url);
+      },
+
+      /**
+       * 提交名单分配
+       * @param {string} leadId
+       */
+      submitAssignLead(leadId) {
+        if (!this.assignTargetUserId) return;
+        const idx = this.customers.findIndex(c=>c.id===leadId);
+        if (idx!==-1) {
+          this.customers[idx].ownerId       = this.assignTargetUserId;
+          this.customers[idx].stage         = 'Potential';
+          this.customers[idx].pendingAccept = true;
+        }
+        this._save();
+        this.assigningLeadId    = null;
+        this.assignTargetUserId = '';
+      },
+
+      /**
+       * 一键平均分配：将名单库所有线索轮流分给各销售员
+       */
+      assignAllLeads() {
+        const leads = this.getLeads();
+        const users = this.getSalesUsers();
+        if (!leads.length || !users.length) return;
+        leads.forEach((lead, i) => {
+          const idx = this.customers.findIndex(c=>c.id===lead.id);
+          if (idx !== -1) {
+            this.customers[idx].ownerId       = users[i % users.length].id;
+            this.customers[idx].stage         = 'Potential';
+            this.customers[idx].pendingAccept = true;
+          }
+        });
+        this._save();
+      },
+
+      /**
+       * 当前销售员待接受的名单列表
+       * @returns {Object[]}
+       */
+      getPendingLeads() {
+        if (!this.currentUser || this.currentUser.role==='director') return [];
+        return this.customers.filter(c=>c.ownerId===this.currentUser.id && c.pendingAccept===true);
+      },
+
+      /**
+       * 销售员接受名单（放入漏斗潜在客户列，等待跟进）
+       * @param {string} customerId
+       */
+      acceptLead(customerId) {
+        const idx = this.customers.findIndex(c=>c.id===customerId);
+        if (idx !== -1) {
+          this.customers[idx].pendingAccept = false;
+          // stage 保持 Potential，正式进入漏斗
+        }
+        this._save();
+      },
+
+      /**
+       * 一键接受并立即开始跟进（记录互动 + 进入触达中）
+       * @param {string} customerId
+       */
+      startFollowup(customerId) {
+        const idx = this.customers.findIndex(c=>c.id===customerId);
+        if (idx !== -1) {
+          this.customers[idx].pendingAccept = false;
+          this.customers[idx].stage        = 'Reaching';
+          this.customers[idx].lastInteract = this.todayStr();
+        }
+        this.interactions.push({
+          id: 'I'+Date.now(), customerId,
+          type: '初次触达',
+          content: '接受主管分配名单，开始主动触达。',
+          date: this.todayStr(), userId: this.currentUser.id,
+        });
+        this._save();
+      },
+
+      // ── Patch 2: VPS 完善度 ──
+
+      /**
+       * 计算客户资料完善度
+       * @param {Object} c - Customer
+       * @returns {number} 0-100
+       */
+      getCompleteness(c) {
+        if (!c) return 0;
+        const fields = [c.contactName, c.phone, c.industry, c.size, c.source];
+        const filled = fields.filter(f => f && String(f).trim() !== '').length;
+        return Math.round(filled / 5 * 100);
+      },
+
+      /**
+       * 完善度分数字符串，如 "2/5"
+       * @param {Object} c - Customer @returns {string}
+       */
+      getCompletenessStr(c) {
+        if (!c) return '0/5';
+        const fields = [c.contactName, c.phone, c.industry, c.size, c.source];
+        const filled = fields.filter(f => f && String(f).trim() !== '').length;
+        return filled + '/5';
+      },
+
+      /**
+       * 完善度进度条颜色
+       * @param {number} pct @returns {string}
+       */
+      getCompletenessCls(pct) {
+        if (pct < 40) return 'bg-red-400';
+        if (pct < 80) return 'bg-amber-400';
+        return 'bg-emerald-400';
+      },
+
+      /**
+       * 按销售员统计完善度异常分布
+       * @param {string} userId
+       * @returns {{red:number, yellow:number, total:number}}
+       */
+      getCompletenessStats(userId) {
+        const mine = this.customers.filter(c => c.ownerId===userId && c.stage!=='unassigned');
+        const red    = mine.filter(c => this.getCompleteness(c) < 40).length;
+        const yellow = mine.filter(c => { const p=this.getCompleteness(c); return p>=40 && p<80; }).length;
+        return { red, yellow, total: mine.length };
+      },
+
+      // ── 销售员角色专属洞察 ──────────────────────────
+
+      /**
+       * 客户关系温度（按最近触达天数）
+       * @param {Object} customer
+       * @returns {{icon:string, label:string, days:number|null, barCls:string}}
+       */
+      getRelationshipTemp(customer) {
+        if (!customer.lastInteract) return { icon:'🥶', label:'从未触达', days:null, barCls:'bg-slate-200' };
+        const days = Math.floor((new Date(this.todayStr()) - new Date(customer.lastInteract)) / 86400000);
+        if (days <= 2)  return { icon:'🔥', label:`${days}天前`, days, barCls:'bg-red-400' };
+        if (days <= 6)  return { icon:'😊', label:`${days}天前`, days, barCls:'bg-amber-400' };
+        if (days <= 13) return { icon:'😐', label:`${days}天前`, days, barCls:'bg-slate-300' };
+        return { icon:'🥶', label:`${days}天前`, days, barCls:'bg-blue-200' };
+      },
+
+      /**
+       * 客户最近一条交互记录
+       * @param {string} customerId
+       * @returns {Object|null}
+       */
+      getLatestInteraction(customerId) {
+        const list = this.getCustomerInteractions(customerId);
+        return list.length > 0 ? list[list.length - 1] : null;
+      },
+
+      // ── Hermes 智能提醒 ──────────────────────────
+
+      /**
+       * 根据 tab 和当前用户状态生成 Hermes 洞察消息列表
+       * @param {'tasks'|'funnel'|'receivables'|'manager'} tab
+       * @returns {Array<{level:'warn'|'tip'|'praise', icon:string, text:string, sub?:string}>}
+       */
+      getHermesMsgs(tab) {
+        if (!this.currentUser) return [];
+        const msgs = [];
+        const isManager = this.hasManageView();
+
+        if (tab === 'tasks') {
+          if (isManager) {
+            const redN     = this.getReceivablesByStatusAll('red').length;
+            const yelN     = this.getReceivablesByStatusAll('yellow').length;
+            const lagSales = this.getSalesUsers().filter(u => this.getOutreachProgress(u.id).pending > 0);
+            if (redN > 0)
+              msgs.push({ level:'warn',   icon:'🔴', text:`${redN} 笔账款已逾期，每推迟一天坏账风险上升。`, sub:'建议立即推送催收提醒', action:{ tab:'receivables', label:'查看账款 →' } });
+            if (yelN > 0)
+              msgs.push({ level:'warn',   icon:'🟡', text:`${yelN} 笔账款 7 天内到期，提前确认销售跟进计划。`, action:{ tab:'receivables', label:'查看账款 →' } });
+            if (lagSales.length > 0)
+              msgs.push({ level:'tip',    icon:'📞', text:`${lagSales.map(u=>u.name).join('、')} 今日触达未完成，建议穿透查看执行情况。`, action:{ tab:'manager', label:'查看进度 →' } });
+            if (redN===0 && yelN===0 && lagSales.length===0)
+              msgs.push({ level:'praise', icon:'✨', text:'全组今日执行状态良好，无异常需要处理！' });
+          } else {
+            const tasks    = this.getTodayTasks();
+            const doneN    = tasks.filter(t => this.isCompletedToday(t.id)).length;
+            const overdueN = tasks.filter(t => t.taskType === 'overdue').length;
+            const rr       = this.getResponseRate(this.currentUser.id);
+            const lowN     = tasks.filter(t => this.getCompleteness(t) < 40).length;
+            const pending  = this.getPendingLeads().length;
+            if (overdueN > 0)
+              msgs.push({ level:'warn',   icon:'🔴', text:`有 ${overdueN} 笔逾期账款，应收回收是今日最高优先级！`, action:{ tab:'receivables', label:'去处理 →' } });
+            if (pending > 0)
+              msgs.push({ level:'warn',   icon:'📬', text:`有 ${pending} 条名单待接受，及早接受后即可开始跟进。`, action:{ tab:'funnel', label:'去接受 →' } });
+            if (rr.status === 'red')
+              msgs.push({ level:'warn',   icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 严重偏低，话术或触达时机需要调整。`, action:{ tab:'funnel', label:'看漏斗 →' } });
+            else if (rr.status === 'yellow')
+              msgs.push({ level:'tip',    icon:'📞', text:`回复率 ${rr.replied}/${rr.reached} 偏低，建议换个时段重新触达沉默客户。`, action:{ tab:'funnel', label:'看漏斗 →' } });
+            if (lowN > 0)
+              msgs.push({ level:'tip',    icon:'📋', text:`${lowN} 个任务客户资料不完整，完善后 AI 话术质量显著提升。`, action:{ tab:'funnel', label:'完善资料 →' } });
+            if (doneN === tasks.length && tasks.length > 0)
+              msgs.push({ level:'praise', icon:'🎉', text:'今日任务全部完成！Hermes 为你的执行力点赞。' });
+            else if (tasks.length > 0)
+              msgs.push({ level:'tip',    icon:'⏱', text:`今日完成 ${doneN}/${tasks.length}，还剩 ${tasks.length-doneN} 个待处理，加油！`, action:{ tab:'tasks', label:'去处理 →', resetFilter:null } });
+            if (msgs.length === 0)
+              msgs.push({ level:'tip',    icon:'👋', text:'今日暂无紧急预警，保持节奏继续推进！' });
+          }
+        }
+
+        if (tab === 'funnel') {
+          const today   = new Date(this.todayStr());
+          const STUCK   = 7;
+          const stuck   = this.customers.filter(c => {
+            if (!isManager && c.ownerId !== this.currentUser.id) return false;
+            if (['Potential','Closed','unassigned'].includes(c.stage)) return false;
+            if (!c.lastInteract) return true;
+            return (today - new Date(c.lastInteract)) / 86400000 >= STUCK;
+          });
+          if (stuck.length > 0)
+            msgs.push({ level:'warn',   icon:'⏸', text:`${stuck.length} 个客户停滞 ≥${STUCK} 天未推进，冷却风险升高。`, sub: stuck.slice(0,3).map(c=>c.name).join('、')+(stuck.length>3?`等${stuck.length}个`:'') });
+          const emptyMid = ['Reaching','Replied','Meeting'].filter(s => this.getFunnelCount(s) === 0);
+          if (emptyMid.length > 0)
+            msgs.push({ level:'tip',    icon:'📊', text:`${emptyMid.map(s=>this.funnelStages.find(f=>f.id===s)?.label||s).join(' / ')} 阶段为空，漏斗断层影响下月业绩。` });
+          const intentN = this.getFunnelCount('Intent');
+          if (intentN > 0)
+            msgs.push({ level:'tip',    icon:'🎯', text:`${intentN} 个意向客户等待成交，抓住窗口期推进签单！`, action:{ tab:'receivables', label:'登记成交 →' } });
+          if (msgs.length === 0)
+            msgs.push({ level:'praise', icon:'✅', text:'漏斗各阶段分布均衡，继续保持推进节奏！' });
+        }
+
+        if (tab === 'receivables') {
+          const redList    = isManager ? this.getReceivablesByStatusAll('red')    : this.getReceivablesByStatus('red');
+          const yelList    = isManager ? this.getReceivablesByStatusAll('yellow') : this.getReceivablesByStatus('yellow');
+          const all        = isManager ? this.receivables : this.getMyReceivables();
+          const overdueAmt = redList.reduce((s,r)=>s+(r.totalAmount-r.paidAmount),0);
+          if (redList.length > 0)
+            msgs.push({ level:'warn',   icon:'🔴', text:`${redList.length} 笔已逾期，逾期余额 ¥${this.fmt(overdueAmt)}，请立即跟进。`, sub:'逾期越久坏账概率越高' });
+          if (yelList.length > 0)
+            msgs.push({ level:'warn',   icon:'🟡', text:`${yelList.length} 笔临期（7天内），建议提前确认收款计划。` });
+          if (all.length === 0)
+            msgs.push({ level:'tip',    icon:'💰', text:'暂无应收记录，成交登记后账款将自动生成。', action:{ tab:'funnel', label:'去成交 →' } });
+          else if (redList.length === 0 && yelList.length === 0)
+            msgs.push({ level:'praise', icon:'💚', text:`应收账款状态健康，余额 ¥${this.fmt(this.sumBalance(all))} 均在账期内，继续保持！` });
+        }
+
+        if (tab === 'manager') {
+          const anomalyRed  = this.getSalesUsers().filter(u =>
+            this.getReceivablesByStatusAll('red').some(r => this.getCustomerOwner(r.customerId)===u.id) ||
+            this.getResponseRate(u.id).status === 'red' ||
+            this.getConversionRate(u.id).status === 'red'
+          ).length;
+          const unassignedN = this.customers.filter(c=>c.stage==='unassigned').length;
+          const lowVPS      = this.getSalesUsers().filter(u => this.getCompletenessStats(u.id).red > 0);
+          if (anomalyRed > 0)
+            msgs.push({ level:'warn',   icon:'🚨', text:`${anomalyRed} 名成员存在红色异常指标，需要重点介入。`, sub:'见下方三色异常面板' });
+          if (unassignedN > 0)
+            msgs.push({ level:'tip',    icon:'📋', text:`名单库有 ${unassignedN} 条线索待分配，越早分发跟进越及时。`, action:{ tab:'manager', label:'去分配 →' } });
+          if (lowVPS.length > 0)
+            msgs.push({ level:'tip',    icon:'📝', text:`${lowVPS.map(u=>u.name).join('、')} 名下客户资料不完整，影响 AI 话术质量。`, action:{ tab:'manager', label:'查看明细 →' } });
+          if (msgs.length === 0)
+            msgs.push({ level:'praise', icon:'🌟', text:'全组指标暂无异常，团队运转良好！' });
+        }
+
+        return msgs;
+      },
+
+      /**
+       * Hermes 消息卡片的样式（背景 + 边框 + 文字）
+       * @param {'warn'|'tip'|'praise'} level
+       * @returns {string}
+       */
+      getHermesCls(level) {
+        return { warn:'bg-red-50 border-red-200', tip:'bg-violet-50 border-violet-200', praise:'bg-emerald-50 border-emerald-200' }[level] || 'bg-slate-50 border-slate-200';
+      },
+
+      /**
+       * Hermes 消息文字颜色
+       * @param {'warn'|'tip'|'praise'} level
+       */
+      getHermesTextCls(level) {
+        return { warn:'text-red-700', tip:'text-violet-700', praise:'text-emerald-700' }[level] || 'text-slate-700';
+      },
+
+      /**
+       * 打开客户资料编辑弹窗
+       * @param {Object} customer
+       */
+      openEditModal(customer) {
+        this.editModal = {
+          show: true, customer,
+          form: {
+            contactName: customer.contactName || '',
+            phone:       customer.phone       || '',
+            industry:    customer.industry    || '',
+            size:        customer.size        || '',
+            source:      customer.source      || '',
+          },
+        };
+      },
+
+      /** 提交资料编辑 */
+      submitEdit() {
+        const idx = this.customers.findIndex(c=>c.id===this.editModal.customer.id);
+        if (idx!==-1) Object.assign(this.customers[idx], this.editModal.form);
+        this._save();
+        this.editModal.show = false;
+      },
+
+      // ── 指标计算（引用 rules）──
+
+      /**
+       * 触达回复率
+       * @param {string} userId
+       * @returns {{rate:number, status:string, reached:number, replied:number}}
+       */
+      getResponseRate(userId) {
+        const mine          = this.customers.filter(c=>c.ownerId===userId);
+        const reachedStages = ['Reaching','Replied','Meeting','Intent','Closed'];
+        const repliedStages = ['Replied','Meeting','Intent','Closed'];
+        const reached = mine.filter(c=>reachedStages.includes(c.stage)).length;
+        const replied = mine.filter(c=>repliedStages.includes(c.stage)).length;
+        if (reached===0) return { rate:0, status:'gray', reached:0, replied:0 };
+        const rate   = Math.round(replied/reached*100);
+        const status = rate < this.rules.responseRateRed ? 'red' : rate < this.rules.responseRateYellow ? 'yellow' : 'green';
+        return { rate, status, reached, replied };
+      },
+
+      /**
+       * 转化率
+       * @param {string} userId
+       * @returns {{rate:number, status:string, opps:number, won:number}}
+       */
+      getConversionRate(userId) {
+        const mine = this.customers.filter(c=>c.ownerId===userId);
+        const opps = mine.filter(c=>['Intent','Closed'].includes(c.stage)).length;
+        const won  = mine.filter(c=>c.stage==='Closed').length;
+        if (opps===0) return { rate:0, status:'gray', opps:0, won:0 };
+        const rate   = Math.round(won/opps*100);
+        const status = rate < this.rules.responseRateRed ? 'red' : rate < this.rules.responseRateYellow ? 'yellow' : 'green';
+        return { rate, status, opps, won };
+      },
+
+      /**
+       * 三色徽章 CSS
+       * @param {'red'|'yellow'|'green'|'gray'} status @returns {string}
+       */
+      getStatusBadgeCls(status) {
+        return { red:'bg-red-100 text-red-700', yellow:'bg-amber-100 text-amber-700', green:'bg-emerald-100 text-emerald-700', gray:'bg-slate-100 text-slate-400' }[status] || 'bg-slate-100 text-slate-400';
+      },
+      getStatusLabel(status) {
+        return { red:'红', yellow:'黄', green:'绿', gray:'—' }[status] || '—';
+      },
+
+      // ── Agent 触达 ──
+
+      openAgentModal(customer) {
+        this.agentModal = { show:true, customer, loading:true, script:'', editMode:false, editedScript:'', successMsg:null };
+        setTimeout(() => { this.agentModal.loading=false; this.agentModal.script=this._genScript(customer); }, 2000);
+      },
+      regenerateScript() {
+        this.agentModal.loading=true; this.agentModal.script=''; this.agentModal.editMode=false;
+        setTimeout(() => { this.agentModal.loading=false; this.agentModal.script=this._genScript(this.agentModal.customer); }, 1500);
+      },
+      adoptScript() {
+        const cust   = this.agentModal.customer;
+        const script = this.agentModal.editMode ? this.agentModal.editedScript : this.agentModal.script;
+        this.interactions.push({ id:'I'+Date.now(), customerId:cust.id, type:'AI话术触达', content:script, date:this.todayStr(), userId:this.currentUser.id });
+        const idx = this.customers.findIndex(c=>c.id===cust.id);
+        if (idx!==-1) {
+          this.customers[idx].lastInteract = this.todayStr();
+          if (this.customers[idx].stage==='Potential') this.customers[idx].stage='Reaching';
+        }
+        this._save();
+        this.agentModal.successMsg = `已记录触达 · ${cust.name} 阶段更新为"触达中"`;
+        setTimeout(() => { this.agentModal.show=false; }, 1800);
+      },
+      _genScript(c) {
+        const t = [
+          `您好，${c.name}的负责人，我是M9销售顾问。我们专注于为${c.level}级规模企业提供客户全周期管理解决方案，已帮助同类企业提升30%+转化效率。请问贵司目前客户管理最大的痛点是什么？期待与您交流5分钟。`,
+          `您好！我是M9方案顾问。${c.name}正处于扩张期，客户数据分散管理往往带来隐形成本。我们系统已有200+同规模企业使用，平均回收期不足6个月。方便约15分钟电话详聊吗？`,
+          `您好，${c.name}团队，M9联系。${c.level}类企业在客户精细化运营上普遍有挑战，M9已有3个同赛道标杆案例，转化率提升均在25%以上。可发一份案例白皮书给您参考，请问邮箱方便留一下吗？`,
+          `您好！${c.name}的${c.level}级体量在行业属快速成长型。M9为此类企业定制"六阶段漏斗"管理方案，能显著缩短销售周期。这周有空的话，我们线上演示30分钟，如何？`,
+        ];
+        return t[Math.floor(Math.random()*t.length)];
+      },
+
+      // ── 辅助 ──
+
+      switchUser(uid) { this.currentUser = this.users.find(u=>u.id===uid)||null; this.activeTab = 'tasks'; },
+      todayStr()      { return new Date().toISOString().split('T')[0]; },
+      getDueDate30()  { const d=new Date(); d.setDate(d.getDate()+30); return d.toISOString().split('T')[0]; },
+      getDaysSinceJoin(user) { if (!user||!user.joinDate) return 0; return Math.floor((new Date()-new Date(user.joinDate))/86400000); },
+      isNewbie(user)  { return this.getDaysSinceJoin(user) < this.rules.newbieDays; },
+      getCustomerInteractions(customerId) { return this.interactions.filter(i=>i.customerId===customerId).sort((a,b)=>b.date.localeCompare(a.date)); },
+      isCompletedToday(customerId) { return this.interactions.some(i=>i.customerId===customerId&&i.date===this.todayStr()); },
+      getCustomerName(customerId)  { return this.customers.find(c=>c.id===customerId)?.name||'未知客户'; },
+      getCustomerOwner(customerId) { return this.customers.find(c=>c.id===customerId)?.ownerId||''; },
+      getOwnerName(userId)         { return this.users.find(u=>u.id===userId)?.name||userId; },
+      getStageLabel(stage) { return {Potential:'潜在',Reaching:'触达中',Replied:'已回复',Meeting:'约见',Intent:'意向',Closed:'成交',unassigned:'待分配'}[stage]||stage; },
+      getLevelColor(level) { return {S:'bg-purple-100 text-purple-800',A:'bg-blue-100 text-blue-800',B:'bg-emerald-100 text-emerald-800',C:'bg-slate-100 text-slate-600'}[level]||'bg-slate-100 text-slate-600'; },
+      fmt(n) { if (!n&&n!==0) return '0'; return n>=10000?(n/10000).toFixed(1).replace(/\.0$/,'')+'万':n.toLocaleString(); },
+    };
+  }
+</script>
+</body>
+</html>
